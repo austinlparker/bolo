@@ -30,7 +30,6 @@ const state = new GameState();
 state.terrain = gen.terrain as Uint8Array<ArrayBuffer>;
 state.bases = gen.bases;
 state.pills = gen.pills;
-state.mapReset = true;
 state.war = {
   warNumber: 3,
   seed,
@@ -92,7 +91,6 @@ const over = createCanvas(1024, 1024);
 const octx = over.getContext('2d');
 const state2 = new GameState();
 state2.terrain = gen.terrain as Uint8Array<ArrayBuffer>;
-state2.mapReset = true;
 const { TileCache, TILE_PX } = await import('../src/tiles');
 const cache = new TileCache();
 cache.sync(state2 as any);

@@ -67,8 +67,22 @@ export class Input {
       send();
     });
 
-    // click to dispatch the builder with the selected tool
-    renderer.canvas.addEventListener('click', (ev) => {
+    // tap/click on the battlefield dispatches the builder with the selected
+    // tool. Pointer events cover mouse and touch alike; a "tap" is a short
+    // press without much movement (so stray drags don't send the poor man
+    // marching anywhere).
+    let downAt = 0;
+    let downX = 0;
+    let downY = 0;
+    renderer.canvas.addEventListener('pointerdown', (ev) => {
+      downAt = performance.now();
+      downX = ev.clientX;
+      downY = ev.clientY;
+    });
+    renderer.canvas.addEventListener('pointerup', (ev) => {
+      const quick = performance.now() - downAt < 350;
+      const still = Math.hypot(ev.clientX - downX, ev.clientY - downY) < 12;
+      if (!quick || !still) return;
       const [wx, wy] = renderer.screenToWorld(ev.clientX, ev.clientY);
       net.send({ t: 'builder', order: hud.tool, x: Math.floor(wx), y: Math.floor(wy) });
     });

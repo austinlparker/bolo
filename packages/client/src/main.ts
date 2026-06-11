@@ -13,6 +13,7 @@ import { Net } from './net';
 import { Renderer } from './render';
 import { startSpectator } from './spectator';
 import { GameState } from './state';
+import { isTouchDevice, TouchControls } from './touch';
 
 const root = document.getElementById('app')!;
 
@@ -34,17 +35,24 @@ async function startPlayer(): Promise<void> {
   const state = new GameState();
   const renderer = new Renderer(canvas);
   const hud = new Hud(root);
+  const touch = isTouchDevice();
+  if (touch) document.body.classList.add('touch-mode');
 
   const net = new Net(handleMsg, () => ({ t: 'hello', token: creds!.token, role: 'player' }));
+  hud.onRecall = () => net.send({ t: 'builder_recall' });
+  const touchControls = touch ? new TouchControls(root, net) : null;
 
   function handleMsg(msg: ServerMsg): void {
     switch (msg.t) {
       case 'welcome':
         state.applyWelcome(msg);
         if (msg.you) {
+          const controls = touch
+            ? 'stick to drive · hold ⊕ to fire · pick a tool, tap the map to send your builder'
+            : 'WASD drive · space fire · 1-6 builder tools · click to send builder · R recall · enter chat';
           hud.showBanner(
             `<span class="f-${msg.you.faction}">you fight for ${FACTION_NAMES[msg.you.faction]}</span><br/>` +
-              `<small>WASD drive · space fire · 1-6 builder tools · click to send builder · R recall · enter chat</small>`,
+              `<small>${controls}</small>`,
             7000,
           );
         }
@@ -86,6 +94,7 @@ async function startPlayer(): Promise<void> {
   function loop(now: number): void {
     requestAnimationFrame(loop);
     renderer.frame(state, now);
+    touchControls?.tick(state, now);
     hud.update(state);
   }
   requestAnimationFrame(loop);

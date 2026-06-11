@@ -55,7 +55,7 @@ export function startSpectator(root: HTMLElement): void {
         if (msg.terrain) {
           for (const [x, y, t] of msg.terrain) {
             state.terrain[y * MAP_SIZE + x] = t;
-            state.dirtyTiles.push([x, y]);
+            state.logTerrainChange(x, y);
           }
         }
       } else if (msg.t === 'war_over') {

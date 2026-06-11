@@ -28,6 +28,10 @@ export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private tiles = new TileCache();
   private vignette: CanvasGradient | null = null;
+  private dpr = 1;
+  /** viewport size in CSS pixels */
+  private vw = 0;
+  private vh = 0;
   scale = 26; // screen px per tile
   camX = MAP_SIZE / 2;
   camY = MAP_SIZE / 2;
@@ -36,8 +40,17 @@ export class Renderer {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
     const fit = () => {
-      canvas.width = innerWidth;
-      canvas.height = innerHeight;
+      this.dpr = Math.min(globalThis.devicePixelRatio || 1, 2.5);
+      this.vw = innerWidth;
+      this.vh = innerHeight;
+      canvas.width = Math.round(this.vw * this.dpr);
+      canvas.height = Math.round(this.vh * this.dpr);
+      if (canvas.style) {
+        canvas.style.width = `${this.vw}px`;
+        canvas.style.height = `${this.vh}px`;
+      }
+      // zoom out a touch on small screens so enough battlefield is visible
+      this.scale = Math.min(this.vw, this.vh) < 540 ? 20 : 26;
       this.vignette = null;
     };
     addEventListener('resize', fit);
@@ -45,15 +58,14 @@ export class Renderer {
   }
 
   screenToWorld(sx: number, sy: number): [number, number] {
-    return [
-      this.camX + (sx - this.canvas.width / 2) / this.scale,
-      this.camY + (sy - this.canvas.height / 2) / this.scale,
-    ];
+    return [this.camX + (sx - this.vw / 2) / this.scale, this.camY + (sy - this.vh / 2) / this.scale];
   }
 
   frame(state: GameState, now: number): void {
     const ctx = this.ctx;
-    const { width: w, height: h } = this.canvas;
+    const w = this.vw;
+    const h = this.vh;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.tiles.sync(state);
 
     // camera follows your tank

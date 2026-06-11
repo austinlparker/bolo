@@ -22,6 +22,8 @@ body {
   color: var(--text);
   font-family: 'Courier New', ui-monospace, monospace;
   overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #app,
@@ -33,6 +35,13 @@ canvas.game {
 canvas.game {
   display: block;
   image-rendering: pixelated;
+  touch-action: none;
+}
+
+.hud,
+#touch-ui {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* ---------- panels ---------- */
@@ -450,4 +459,211 @@ a.button-link {
 a.button-link:hover {
   border-color: var(--dawn);
   background: rgba(232, 163, 61, 0.08);
+}
+
+/* ---------- touch controls ---------- */
+#touch-ui {
+  display: none;
+}
+
+body.touch-mode #touch-ui {
+  display: block;
+}
+
+#joy-zone {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: 200px;
+  height: 200px;
+  z-index: 15;
+  touch-action: none;
+}
+
+#joy-base {
+  position: absolute;
+  left: 22px;
+  bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+  width: 124px;
+  height: 124px;
+  border-radius: 50%;
+  border: 2px solid var(--line-bright);
+  background: rgba(13, 16, 22, 0.5);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+#joy-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  margin: -27px 0 0 -27px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #f0b252, #c47f20);
+  border: 2px solid #5a3c0c;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5);
+}
+
+#fire-btn {
+  position: fixed;
+  right: 20px;
+  bottom: calc(26px + env(safe-area-inset-bottom, 0px));
+  width: 94px;
+  height: 94px;
+  border-radius: 50%;
+  border: 2px solid #7a3434;
+  background: rgba(150, 48, 48, 0.4);
+  color: #ffb9b9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  line-height: 1;
+  z-index: 15;
+  touch-action: none;
+  cursor: pointer;
+}
+
+#fire-btn span {
+  font-size: 10px;
+  letter-spacing: 3px;
+  margin-top: 2px;
+}
+
+#fire-btn.held {
+  background: rgba(225, 70, 70, 0.65);
+  border-color: #c45050;
+}
+
+/* chat hides behind a toggle on touch devices */
+#chat-toggle {
+  display: none;
+  position: fixed;
+  left: 12px;
+  bottom: calc(216px + env(safe-area-inset-bottom, 0px));
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  z-index: 16;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+body.touch-mode #chat-toggle {
+  display: flex;
+}
+
+body.touch-mode #hud-chat {
+  display: none;
+}
+
+body.touch-mode #hud-chat.open {
+  display: block;
+  left: 10px;
+  right: 10px;
+  top: 52px;
+  bottom: auto;
+  width: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 8px;
+  z-index: 30;
+}
+
+body.touch-mode #hud-chat.open #chat-input {
+  display: block;
+  font-size: 16px; /* prevents iOS zoom-on-focus */
+}
+
+/* bigger touch targets for the tool bar, raised clear of thumbs */
+body.touch-mode #hud-tools {
+  bottom: calc(138px + env(safe-area-inset-bottom, 0px));
+  max-width: 96vw;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+body.touch-mode #hud-tools .tool {
+  padding: 11px 13px;
+  font-size: 13px;
+}
+
+/* ---------- small screens ---------- */
+@media (max-width: 760px), (max-height: 500px) {
+  #hud-status {
+    min-width: 0;
+    padding: 6px 8px;
+    font-size: 10px;
+    line-height: 1.5;
+  }
+
+  #hud-status .callsign {
+    font-size: 11px;
+  }
+
+  .meter {
+    height: 5px;
+  }
+
+  #hud-war {
+    top: 6px;
+    padding: 4px 10px;
+    font-size: 10px;
+    max-width: 50vw;
+  }
+
+  #hud-feed {
+    display: none;
+  }
+
+  #hud-minimap {
+    top: 10px;
+    bottom: auto;
+    right: 10px;
+    width: 110px;
+    height: 110px;
+  }
+
+  #banner {
+    font-size: 18px;
+    letter-spacing: 3px;
+    width: 92vw;
+  }
+
+  #banner small {
+    font-size: 11px;
+  }
+
+  .spec-panel {
+    font-size: 10px;
+    line-height: 1.6;
+    max-width: min(280px, 64vw);
+    max-height: 46vh;
+    overflow-y: auto;
+    padding: 8px 10px;
+  }
+
+  .spec-panel h2 {
+    font-size: 13px;
+  }
+
+  .login-box {
+    padding: 22px;
+  }
+
+  .login-box h1 {
+    font-size: 36px;
+    letter-spacing: 10px;
+  }
+}
+
+/* the login input always stays >=16px so iOS doesn't zoom the viewport */
+.login-box input {
+  font-size: 16px;
 }

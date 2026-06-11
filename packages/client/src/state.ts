@@ -44,9 +44,22 @@ export class GameState {
   tick = 0;
   booms: Boom[] = [];
   feed: string[] = [];
-  /** terrain tiles changed since the renderer last repainted its tile cache */
-  dirtyTiles: [number, number][] = [];
-  mapReset = true;
+  /**
+   * Terrain change tracking with multiple consumers (main view + minimap
+   * caches): a version bump means "repaint everything"; the log appends
+   * changed tiles and each TileCache keeps its own cursor into it.
+   */
+  mapVersion = 0;
+  terrainLog: [number, number][] = [];
+
+  /** record a terrain edit and cap the log so it can't grow unbounded */
+  logTerrainChange(x: number, y: number): void {
+    this.terrainLog.push([x, y]);
+    if (this.terrainLog.length > 4096) {
+      this.mapVersion++;
+      this.terrainLog = [];
+    }
+  }
 
   applyWelcome(msg: WelcomeMsg): void {
     this.terrain = base64ToBytes(msg.map.terrain);
@@ -59,7 +72,8 @@ export class GameState {
     this.tanks.clear();
     this.shells = [];
     this.builders = [];
-    this.mapReset = true;
+    this.mapVersion++;
+    this.terrainLog = [];
   }
 
   applyState(msg: StateMsg): void {
@@ -87,7 +101,7 @@ export class GameState {
     if (msg.terrain) {
       for (const [x, y, t] of msg.terrain) {
         this.terrain[y * MAP_SIZE + x] = t;
-        this.dirtyTiles.push([x, y]);
+        this.logTerrainChange(x, y);
       }
     }
     if (msg.mines) {

@@ -14,6 +14,10 @@ const T = TILE_PX;
 export class TileCache {
   canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
+  /** per-consumer cursors into GameState's change tracking, so several
+   * caches (main view, minimap) can sync off the same state independently */
+  private seenVersion = -1;
+  private seenIndex = 0;
 
   constructor() {
     this.canvas = document.createElement('canvas');
@@ -23,9 +27,9 @@ export class TileCache {
   }
 
   sync(state: GameState): void {
-    if (state.mapReset) {
-      state.mapReset = false;
-      state.dirtyTiles = [];
+    if (this.seenVersion !== state.mapVersion) {
+      this.seenVersion = state.mapVersion;
+      this.seenIndex = state.terrainLog.length;
       for (let y = 0; y < MAP_SIZE; y++) {
         for (let x = 0; x < MAP_SIZE; x++) {
           this.paintTile(state, x, y);
@@ -33,9 +37,10 @@ export class TileCache {
       }
       return;
     }
-    if (state.dirtyTiles.length) {
+    if (state.terrainLog.length > this.seenIndex) {
       const repaint = new Set<number>();
-      for (const [x, y] of state.dirtyTiles) {
+      for (let i = this.seenIndex; i < state.terrainLog.length; i++) {
+        const [x, y] = state.terrainLog[i];
         repaint.add(y * MAP_SIZE + x);
         // neighbors too: road connections and coastlines depend on us
         if (x > 0) repaint.add(y * MAP_SIZE + x - 1);
@@ -43,8 +48,8 @@ export class TileCache {
         if (y > 0) repaint.add((y - 1) * MAP_SIZE + x);
         if (y < MAP_SIZE - 1) repaint.add((y + 1) * MAP_SIZE + x);
       }
+      this.seenIndex = state.terrainLog.length;
       for (const i of repaint) this.paintTile(state, i % MAP_SIZE, Math.floor(i / MAP_SIZE));
-      state.dirtyTiles = [];
     }
   }
 

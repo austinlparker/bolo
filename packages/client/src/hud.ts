@@ -53,6 +53,7 @@ export class Hud {
         <div id="chat-log"></div>
         <input id="chat-input" maxlength="240" placeholder="say something... (enter)" />
       </div>
+      <div id="chat-toggle" class="hud">💬</div>
       <canvas id="hud-minimap" class="hud" width="180" height="180"></canvas>
       <div id="banner"></div>
     `,
@@ -82,6 +83,11 @@ export class Hud {
     recall.onclick = () => this.onRecall?.();
     this.toolsEl.appendChild(recall);
     this.setTool('harvest');
+
+    // mobile: chat is hidden behind a toggle so it doesn't cover the field
+    const chatWrap = document.getElementById('hud-chat')!;
+    const toggle = document.getElementById('chat-toggle')!;
+    toggle.onclick = () => chatWrap.classList.toggle('open');
   }
 
   onRecall: (() => void) | null = null;
