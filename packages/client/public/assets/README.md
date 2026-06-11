@@ -4,8 +4,9 @@ Curated sprites for BOLO, sourced from the **Kenney Game Assets All-in-1** colle
 Lives under `public/` so files keep stable URLs — load in the canvas renderer via
 `new Image(); img.src = '/assets/tanks/tankBody_blue.png'` (no bundler import needed).
 
-Wiring status (`src/sprites.ts` is the manifest/loader; painters fall back to procedural
-drawing until sprites load, and permanently for anything not listed):
+Wiring status (`src/sprites.ts` is the manifest/loader; sprites load behind a loading
+screen before the first frame — there is NO fallback art, painters assume the registry
+is populated):
 
 - **Wired, with load-time recoloring** (blend-mode tints in `src/sprites.ts` keep one
   consistent palette): grass, the full road connection set, forest trees; Map Pack water

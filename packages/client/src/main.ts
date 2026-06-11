@@ -28,9 +28,30 @@ if (location.pathname.startsWith('/map')) {
 }
 
 async function startPlayer(): Promise<void> {
+  // kick off the art load immediately; there is no fallback art, so it must
+  // resolve before the first frame (login time usually hides it entirely)
+  const spritesReady = loadSprites().then(
+    () => null,
+    (err: unknown) => err ?? new Error('sprite load failed'),
+  );
+
   const fromOauth = credentialsFromFragment();
   let creds: Credentials | null = fromOauth.creds ?? savedCredentials();
   if (!creds) creds = await showLogin(root, fromOauth.error);
+
+  const boot = document.createElement('div');
+  boot.className = 'overlay';
+  boot.innerHTML = '<div class="boot-msg">loading the war…</div>';
+  root.appendChild(boot);
+  const loadErr = await spritesReady;
+  if (loadErr) {
+    console.error('sprites failed to load', loadErr);
+    boot.innerHTML =
+      '<div class="boot-msg">the war failed to load<br/><br/><button class="kbtn" id="boot-retry">RETRY</button></div>';
+    document.getElementById('boot-retry')!.addEventListener('click', () => location.reload());
+    return;
+  }
+  boot.remove();
 
   const canvas = document.createElement('canvas');
   canvas.className = 'game';
@@ -39,13 +60,6 @@ async function startPlayer(): Promise<void> {
   const state = new GameState();
   const renderer = new Renderer(canvas);
   const hud = new Hud(root);
-  // art loads BEFORE the first frame: painting fallback art and swapping to
-  // the (brighter) sprites mid-session reads as a startup flash
-  try {
-    await loadSprites();
-  } catch (err) {
-    console.warn('sprites failed to load, using fallback art', err);
-  }
   const touch = isTouchDevice();
   if (touch) document.body.classList.add('touch-mode');
 

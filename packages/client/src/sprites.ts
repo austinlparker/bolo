@@ -4,7 +4,8 @@
  * load time — sprites are drawn into offscreen canvases and recolored with
  * blend modes ('color' to retarget hue/saturation, 'multiply' to darken),
  * so faction colors, our navy water, and neutral greys all derive from the
- * same source art. Painters keep procedural fallbacks until `sprites.ready`.
+ * same source art. `loadSprites()` MUST complete before the first frame:
+ * there is no fallback art (main.ts shows a loading screen meanwhile).
  *
  * The headless preview harness injects a filesystem-based image loader.
  */
@@ -139,9 +140,9 @@ type DerivedKey =
 
 export type SpriteKey = FileKey | AtlasKey | TdKey | DerivedKey;
 
-export const sprites: { ready: boolean; images: Partial<Record<SpriteKey, CanvasImageSource>> } = {
-  ready: false,
-  images: {},
+/** Populated by loadSprites(); typed full because nothing renders before it resolves. */
+export const sprites: { images: Record<SpriteKey, CanvasImageSource> } = {
+  images: {} as Record<SpriteKey, CanvasImageSource>,
 };
 
 export const BOOM_FRAMES = 9;
@@ -255,7 +256,7 @@ function tinted(
 
 /**
  * Load all art and build the tinted variants. `load` is injectable so the
- * headless preview can read from disk. Sets `sprites.ready` when done.
+ * headless preview can read from disk.
  */
 export async function loadSprites(
   load: (url: string) => Promise<CanvasImageSource> = browserLoad,
@@ -322,6 +323,4 @@ export async function loadSprites(
   // gun-range cursor (the crosshair pack art is white; multiply colors it)
   img.crosshairDawn = tinted(img.crosshairBase, null, { multiply: '#f5b04a' });
   img.crosshairDusk = tinted(img.crosshairBase, null, { multiply: '#a98ef5' });
-
-  sprites.ready = true;
 }

@@ -34,8 +34,13 @@ export async function startSpectator(root: HTMLElement): Promise<void> {
 
   const state = new GameState();
   const tiles = new TileCache();
-  // art before first paint, same as the player view: no fallback->sprite flash
-  await loadSprites().catch(() => {});
+  // art before first paint; there is no fallback art
+  try {
+    await loadSprites();
+  } catch {
+    panel.innerHTML = '<h2>ATBOLO</h2>the war failed to load — refresh to retry';
+    return;
+  }
   let latest: SpectateMsg | null = null;
   let history: WarRecord[] = [];
 

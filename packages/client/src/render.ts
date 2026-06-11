@@ -141,7 +141,7 @@ export class Renderer {
       this.drawTank(state, it, now, toScreen, onScreen);
     }
 
-    // shells: faction-tinted tracer + bullet sprite (or a dot pre-load)
+    // shells: faction-tinted tracer + bullet sprite
     for (const s of state.shells) {
       const [px, py] = toScreen(s.x, s.y);
       if (!onScreen(px, py, 20)) continue;
@@ -152,37 +152,26 @@ export class Renderer {
       ctx.moveTo(px - Math.cos(s.dir) * tail, py - Math.sin(s.dir) * tail);
       ctx.lineTo(px, py);
       ctx.stroke();
-      const bullet = sprites.ready
-        ? sprites.images[s.f === 'dawn' ? 'bulletDawn' : s.f === 'dusk' ? 'bulletDusk' : 'bulletNeutral']
-        : undefined;
-      if (bullet) {
-        ctx.save();
-        ctx.translate(px, py);
-        ctx.rotate(s.dir + Math.PI / 2); // sprite points north
-        const k = this.scale / 38;
-        ctx.drawImage(bullet, -2 * k * 2.4, -5 * k * 2.4, 4 * k * 2.4, 10 * k * 2.4);
-        ctx.restore();
-      } else {
-        ctx.fillStyle = '#fff4d0';
-        ctx.beginPath();
-        ctx.arc(px, py, 2.4, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      const bullet = sprites.images[s.f === 'dawn' ? 'bulletDawn' : s.f === 'dusk' ? 'bulletDusk' : 'bulletNeutral'];
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(s.dir + Math.PI / 2); // sprite points north
+      const k = this.scale / 38;
+      ctx.drawImage(bullet, -2 * k * 2.4, -5 * k * 2.4, 4 * k * 2.4, 10 * k * 2.4);
+      ctx.restore();
     }
 
     // gun-range cursor: Bolo's targeting cursor — where your shells land,
     // at max range along the hull axis
-    if (meInterp && meInterp.cur.alive && sprites.ready) {
+    if (meInterp && meInterp.cur.alive) {
       const p = state.lerpTank(meInterp, now, TICK_MS);
       const cross = sprites.images[meInterp.cur.faction === 'dawn' ? 'crosshairDawn' : 'crosshairDusk'];
-      if (cross) {
-        const [cxs, cys] = toScreen(p.x + Math.cos(p.dir) * SHELL_RANGE, p.y + Math.sin(p.dir) * SHELL_RANGE);
-        const cs = this.scale * 0.85;
-        ctx.save();
-        ctx.globalAlpha = 0.75;
-        ctx.drawImage(cross, cxs - cs / 2, cys - cs / 2, cs, cs);
-        ctx.restore();
-      }
+      const [cxs, cys] = toScreen(p.x + Math.cos(p.dir) * SHELL_RANGE, p.y + Math.sin(p.dir) * SHELL_RANGE);
+      const cs = this.scale * 0.85;
+      ctx.save();
+      ctx.globalAlpha = 0.75;
+      ctx.drawImage(cross, cxs - cs / 2, cys - cs / 2, cs, cs);
+      ctx.restore();
     }
 
     // explosions
@@ -263,8 +252,7 @@ export class Renderer {
       this.trackMarks = this.trackMarks.filter((m) => now - m.at < FADE_MS);
     }
 
-    const img = sprites.ready ? sprites.images.tracks : undefined;
-    if (!img) return;
+    const img = sprites.images.tracks;
     const ctx = this.ctx;
     const tw = TANK_RADIUS * 2.3 * this.scale; // tread width ≈ hull width
     const th = (tw * 52) / 37; // sprite is 37x52, points north
@@ -296,7 +284,6 @@ export class Renderer {
     if (!onScreen(px, py)) return;
     const r = TANK_RADIUS * this.scale;
     const body = FACTION_COLORS[t.faction];
-    const dark = FACTION_DARK[t.faction];
     const isMe = t.id === state.you?.tankId;
 
     ctx.save();
@@ -309,96 +296,22 @@ export class Renderer {
     ctx.fill();
 
     if (t.onBoat) {
-      // landing craft under the tank
-      const boat = sprites.ready ? sprites.images.boat : undefined;
+      // landing craft under the tank (dinghy points north)
       ctx.save();
-      if (boat) {
-        ctx.rotate(p.dir + Math.PI / 2); // dinghy points north
-        const bw = r * 2.4;
-        const bh = (bw * 38) / 20;
-        ctx.drawImage(boat, -bw / 2, -bh / 2, bw, bh);
-      } else {
-        ctx.rotate(p.dir);
-        ctx.fillStyle = '#6e4a26';
-        ctx.beginPath();
-        ctx.ellipse(0, 0, r * 2.1, r * 1.45, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#9a7644';
-        ctx.beginPath();
-        ctx.ellipse(0, 0, r * 1.75, r * 1.15, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-
-    const bodyImg = sprites.ready
-      ? sprites.images[t.faction === 'dawn' ? 'tankDawn' : 'tankDusk']
-      : undefined;
-    const barrelImg = sprites.ready
-      ? sprites.images[t.faction === 'dawn' ? 'barrelDawn' : 'barrelDusk']
-      : undefined;
-
-    if (bodyImg && barrelImg) {
-      // Kenney sprites point north; our headings are 0 = east
       ctx.rotate(p.dir + Math.PI / 2);
-      const k = (r * 2.55) / 38; // body sprite is 38px wide
-      ctx.drawImage(bodyImg, (-38 / 2) * k, (-36 / 2) * k, 38 * k, 36 * k);
-      // barrel (12x26) pivots at the turret; its base sits near tank center
-      ctx.drawImage(barrelImg, (-12 / 2) * k, -24 * k, 12 * k, 26 * k);
-      ctx.restore();
-    } else {
-      ctx.rotate(p.dir);
-
-      // treads with rolling tick marks
-      const treadPhase = ((now / 1000) * t.speed * this.scale) % 6;
-      for (const side of [-1, 1] as const) {
-        ctx.fillStyle = '#15171c';
-        ctx.fillRect(-r * 1.05, side * r * 0.52 - r * 0.26, r * 2.1, r * 0.52);
-        ctx.fillStyle = '#2e323a';
-        for (let i = -3; i <= 3; i++) {
-          ctx.fillRect(i * 6 - treadPhase, side * r * 0.52 - r * 0.22, 2, r * 0.44);
-        }
-      }
-
-      // hull: rounded with a sloped nose
-      ctx.fillStyle = dark;
-      hullPath(ctx, r * 1.02);
-      ctx.fill();
-      ctx.fillStyle = body;
-      hullPath(ctx, r * 0.88);
-      ctx.fill();
-      // nose chevron
-      ctx.fillStyle = 'rgba(255,255,255,0.18)';
-      ctx.beginPath();
-      ctx.moveTo(r * 0.55, -r * 0.3);
-      ctx.lineTo(r * 0.82, 0);
-      ctx.lineTo(r * 0.55, r * 0.3);
-      ctx.closePath();
-      ctx.fill();
-
-      // barrel
-      ctx.fillStyle = '#1a1d23';
-      ctx.fillRect(0, -r * 0.09, r * 1.55, r * 0.18);
-      ctx.fillStyle = '#3a3f48';
-      ctx.fillRect(r * 1.28, -r * 0.13, r * 0.27, r * 0.26);
-
-      // turret
-      ctx.fillStyle = '#15171c';
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = dark;
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
-      ctx.fill();
-      // hatch
-      ctx.fillStyle = body;
-      ctx.beginPath();
-      ctx.arc(-r * 0.08, 0, r * 0.16, 0, Math.PI * 2);
-      ctx.fill();
-
+      const bw = r * 2.4;
+      const bh = (bw * 38) / 20;
+      ctx.drawImage(sprites.images.boat, -bw / 2, -bh / 2, bw, bh);
       ctx.restore();
     }
+
+    // Kenney sprites point north; our headings are 0 = east
+    ctx.rotate(p.dir + Math.PI / 2);
+    const k = (r * 2.55) / 38; // body sprite is 38px wide
+    ctx.drawImage(sprites.images[t.faction === 'dawn' ? 'tankDawn' : 'tankDusk'], (-38 / 2) * k, (-36 / 2) * k, 38 * k, 36 * k);
+    // barrel (12x26) pivots at the turret; its base sits near tank center
+    ctx.drawImage(sprites.images[t.faction === 'dawn' ? 'barrelDawn' : 'barrelDusk'], (-12 / 2) * k, -24 * k, 12 * k, 26 * k);
+    ctx.restore();
 
     // carried pillbox indicator
     if (isMe && state.me()?.carriedPill != null) {
@@ -425,17 +338,15 @@ export class Renderer {
       if (age > EMOTE_SHOW_MS) {
         state.emotes.delete(t.id);
       } else {
-        const img = sprites.ready ? sprites.images[EMOTE_SPRITES[emote.kind]] : undefined;
-        if (img) {
-          const pop = Math.min(1, age / 140); // scale-in
-          const fade = age > EMOTE_SHOW_MS - 400 ? (EMOTE_SHOW_MS - age) / 400 : 1;
-          const size = this.scale * 0.95 * (0.5 + 0.5 * pop);
-          const rise = Math.min(age / 300, 1) * 6 + Math.sin(now / 400) * 1.5;
-          ctx.save();
-          ctx.globalAlpha = fade;
-          ctx.drawImage(img, px - size / 2, py - r - 22 - size - rise, size, size);
-          ctx.restore();
-        }
+        const img = sprites.images[EMOTE_SPRITES[emote.kind]];
+        const pop = Math.min(1, age / 140); // scale-in
+        const fade = age > EMOTE_SHOW_MS - 400 ? (EMOTE_SHOW_MS - age) / 400 : 1;
+        const size = this.scale * 0.95 * (0.5 + 0.5 * pop);
+        const rise = Math.min(age / 300, 1) * 6 + Math.sin(now / 400) * 1.5;
+        ctx.save();
+        ctx.globalAlpha = fade;
+        ctx.drawImage(img, px - size / 2, py - r - 22 - size - rise, size, size);
+        ctx.restore();
       }
     }
   }
@@ -446,7 +357,7 @@ export class Renderer {
     const s = this.scale;
     const walking = phase === 'outbound' || phase === 'returning';
     const bob = walking ? Math.sin(now / 90) : 0;
-    const img = sprites.ready ? sprites.images.builderMan : undefined;
+    const img = sprites.images.builderMan;
 
     ctx.save();
     ctx.translate(px, py + bob * 1.2);
@@ -457,33 +368,21 @@ export class Renderer {
     ctx.ellipse(1, s * 0.2, s * 0.16, s * 0.09, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    if (img) {
-      // sprites are alpha-trimmed; keep the robot's aspect and plant his
-      // feet on the faction ring
-      const iw = (img as HTMLCanvasElement).width;
-      const ih = (img as HTMLCanvasElement).height;
-      const h = s * 0.55;
-      const w = (h * iw) / ih;
-      // working: rock side to side like he's putting his back into it
-      if (phase === 'working') ctx.rotate(Math.sin(now / 120) * 0.3);
-      // faction band under his feet so you know whose engineer he is
-      ctx.strokeStyle = FACTION_COLORS[faction];
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.ellipse(0, s * 0.18, s * 0.15, s * 0.07, 0, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.drawImage(img, -w / 2, s * 0.18 - h, w, h);
-    } else {
-      // procedural fallback green man
-      ctx.fillStyle = '#3fae49';
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.15, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#8ad88f';
-      ctx.beginPath();
-      ctx.arc(0, -s * 0.1, s * 0.09, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    // sprites are alpha-trimmed; keep the robot's aspect and plant his
+    // feet on the faction ring
+    const iw = (img as HTMLCanvasElement).width;
+    const ih = (img as HTMLCanvasElement).height;
+    const h = s * 0.55;
+    const w = (h * iw) / ih;
+    // working: rock side to side like he's putting his back into it
+    if (phase === 'working') ctx.rotate(Math.sin(now / 120) * 0.3);
+    // faction band under his feet so you know whose engineer he is
+    ctx.strokeStyle = FACTION_COLORS[faction];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(0, s * 0.18, s * 0.15, s * 0.07, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.drawImage(img, -w / 2, s * 0.18 - h, w, h);
 
     // hammer swing while working
     if (phase === 'working') {
@@ -519,7 +418,7 @@ export class Renderer {
         : owner === 'dusk'
           ? 'towerDusk'
           : 'towerNeutral';
-    const img = sprites.ready ? sprites.images[key] : undefined;
+    const img = sprites.images[key];
 
     // anger aura behind the tower
     if (angry) {
@@ -533,31 +432,20 @@ export class Renderer {
       ctx.stroke();
     }
 
-    if (img) {
-      // shadow
-      ctx.fillStyle = 'rgba(0,0,0,0.28)';
-      ctx.beginPath();
-      ctx.ellipse(px + 1.5, py + s * 0.32, s * 0.4, s * 0.18, 0, 0, Math.PI * 2);
-      ctx.fill();
-      // aspect-correct draw (sprites are alpha-trimmed); the dead husk is
-      // the gunless mount sprite, which reads as "empty" on its own
-      const iw = (img as HTMLCanvasElement).width;
-      const ih = (img as HTMLCanvasElement).height;
-      const dw = s * 0.92;
-      const dh = (dw * ih) / iw;
-      if (dead) ctx.globalAlpha = 0.85;
-      ctx.drawImage(img, px - dw / 2, py - dh / 2, dw, dh);
-      ctx.globalAlpha = 1;
-    } else {
-      // procedural fallback: simple bunker block
-      ctx.fillStyle = dead ? '#383d45' : '#565d68';
-      octagon(ctx, px, py, s / 2);
-      ctx.fill();
-      ctx.fillStyle = FACTION_COLORS[owner];
-      ctx.beginPath();
-      ctx.arc(px, py, s * 0.18, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.beginPath();
+    ctx.ellipse(px + 1.5, py + s * 0.32, s * 0.4, s * 0.18, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // aspect-correct draw (sprites are alpha-trimmed); the dead husk is
+    // the gunless mount sprite, which reads as "empty" on its own
+    const iw = (img as HTMLCanvasElement).width;
+    const ih = (img as HTMLCanvasElement).height;
+    const dw = s * 0.92;
+    const dh = (dw * ih) / iw;
+    if (dead) ctx.globalAlpha = 0.85;
+    ctx.drawImage(img, px - dw / 2, py - dh / 2, dw, dh);
+    ctx.globalAlpha = 1;
 
     if (!dead) {
       ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -572,28 +460,13 @@ export class Renderer {
     const ctx = this.ctx;
     const s = this.scale * 1.25;
     const c = FACTION_COLORS[owner];
-    const img = sprites.ready
-      ? sprites.images[owner === 'dawn' ? 'baseDawn' : owner === 'dusk' ? 'baseDusk' : 'baseNeutral']
-      : undefined;
+    const img = sprites.images[owner === 'dawn' ? 'baseDawn' : owner === 'dusk' ? 'baseDusk' : 'baseNeutral'];
 
-    if (img) {
-      ctx.fillStyle = 'rgba(0,0,0,0.28)';
-      ctx.beginPath();
-      ctx.ellipse(px + 2, py + s * 0.3, s * 0.45, s * 0.2, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.drawImage(img, px - s / 2, py - s / 2, s, s);
-    } else {
-      // procedural fallback: bracketed pad
-      ctx.fillStyle = 'rgba(20,22,28,0.45)';
-      ctx.fillRect(px - s / 2, py - s / 2, s, s);
-      ctx.strokeStyle = c;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(px - s / 2, py - s / 2, s, s);
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(px, py, s * 0.13, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.beginPath();
+    ctx.ellipse(px + 2, py + s * 0.3, s * 0.45, s * 0.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.drawImage(img, px - s / 2, py - s / 2, s, s);
 
     // an owned base flies its colors; a neutral one stands bare
     if (owner !== 'neutral') {
@@ -689,68 +562,16 @@ export class Renderer {
 
   private drawBoom(px: number, py: number, t: number, kind: 'shell' | 'mine', seed: number): void {
     const ctx = this.ctx;
-    const max = kind === 'mine' ? 30 : 16;
-
-    if (sprites.ready) {
-      const frame = Math.min(BOOM_FRAMES - 1, Math.floor(t * BOOM_FRAMES));
-      const img = sprites.images[`${kind === 'mine' ? 'boomMine' : 'boomShell'}${frame}` as SpriteKey];
-      if (img) {
-        const size = (kind === 'mine' ? 2.6 : 1.6) * this.scale;
-        ctx.save();
-        ctx.globalAlpha = t > 0.75 ? (1 - t) / 0.25 : 1;
-        ctx.translate(px, py);
-        ctx.rotate((seed % 7) * 0.9); // varied orientation per explosion
-        ctx.drawImage(img, -size / 2, -size / 2, size, size);
-        ctx.restore();
-        return;
-      }
-    }
-    // flash core
-    if (t < 0.35) {
-      ctx.fillStyle = `rgba(255,236,180,${0.8 * (1 - t / 0.35)})`;
-      ctx.beginPath();
-      ctx.arc(px, py, max * 0.35 * (0.5 + t), 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // shock ring
-    ctx.strokeStyle = kind === 'mine' ? `rgba(255,130,60,${1 - t})` : `rgba(255,210,120,${1 - t})`;
-    ctx.lineWidth = 3 * (1 - t) + 1;
-    ctx.beginPath();
-    ctx.arc(px, py, max * t + 3, 0, Math.PI * 2);
-    ctx.stroke();
-    // debris sparks
-    for (let i = 0; i < 6; i++) {
-      const hh = hash32(seed, i);
-      const ang = (hh % 360) * (Math.PI / 180);
-      const speed = 0.6 + ((hh >> 8) % 100) / 160;
-      const d = max * 1.1 * t * speed;
-      ctx.fillStyle = `rgba(255,${170 + (hh % 60)},90,${(1 - t) * 0.9})`;
-      ctx.fillRect(px + Math.cos(ang) * d - 1, py + Math.sin(ang) * d - 1, 2.5, 2.5);
-    }
+    // clamp low too: boom.at comes from performance.now() at receipt while t
+    // derives from the rAF timestamp, which can lag it slightly
+    const frame = Math.max(0, Math.min(BOOM_FRAMES - 1, Math.floor(t * BOOM_FRAMES)));
+    const img = sprites.images[`${kind === 'mine' ? 'boomMine' : 'boomShell'}${frame}` as SpriteKey];
+    const size = (kind === 'mine' ? 2.6 : 1.6) * this.scale;
+    ctx.save();
+    ctx.globalAlpha = t > 0.75 ? (1 - t) / 0.25 : 1;
+    ctx.translate(px, py);
+    ctx.rotate((seed % 7) * 0.9); // varied orientation per explosion
+    ctx.drawImage(img, -size / 2, -size / 2, size, size);
+    ctx.restore();
   }
-}
-
-/** Tank hull outline: rounded rear, sloped nose. Assumes ctx is translated+rotated. */
-function hullPath(ctx: CanvasRenderingContext2D, r: number): void {
-  ctx.beginPath();
-  ctx.moveTo(-r * 0.9, -r * 0.55);
-  ctx.lineTo(r * 0.45, -r * 0.55);
-  ctx.lineTo(r * 0.95, -r * 0.22);
-  ctx.lineTo(r * 0.95, r * 0.22);
-  ctx.lineTo(r * 0.45, r * 0.55);
-  ctx.lineTo(-r * 0.9, r * 0.55);
-  ctx.quadraticCurveTo(-r * 1.05, 0, -r * 0.9, -r * 0.55);
-  ctx.closePath();
-}
-
-function octagon(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
-  ctx.beginPath();
-  for (let i = 0; i < 8; i++) {
-    const a = (Math.PI / 8) * (2 * i + 1);
-    const x = cx + Math.cos(a) * r;
-    const y = cy + Math.sin(a) * r;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.closePath();
 }

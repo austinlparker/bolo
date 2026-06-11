@@ -83,6 +83,22 @@ canvas.game {
   );
 }
 
+/* boot/loading state shown while sprite art loads (no fallback art exists) */
+.boot-msg {
+  color: var(--dim);
+  font-size: 14px;
+  letter-spacing: 4px;
+  text-align: center;
+}
+
+.boot-msg .kbtn {
+  padding: 8px 22px;
+  color: var(--text);
+  font: inherit;
+  letter-spacing: 4px;
+  cursor: pointer;
+}
+
 .login-box {
   width: 440px;
   max-width: 92vw;
