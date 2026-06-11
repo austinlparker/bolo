@@ -52,5 +52,3 @@ the decent thing to do.
   200-design crosshair set were dropped — re-pull from the source pack if needed.
 - Map Pack water is a light icy blue, not BOLO's deep navy. Either recolor or keep the
   procedural sea — a style call for later.
-</content>
-</invoke>
