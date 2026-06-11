@@ -16,8 +16,18 @@ drawing until sprites load, and permanently for anything not listed):
   faction-multiplied; tracers colored per faction; the LGM is now a little green *machine* -
   worker robot scifiUnit_39, green-tinted; explosion frame sequences; joystick pad skins. Owned bases also fly a **procedural
   waving flag** (`drawFlag` in render.ts — sine-rippled pennant, faction-colored).
+- **Wired, untinted**: `tanks/tracksSmall` → fading tread-mark decals behind moving tanks;
+  `boats/dinghyLarge1` (Pirate Pack) → moored boat tiles + the landing craft under tanks.
+- **Wired terrain overlays** (atlas slices, alpha-trimmed + tinted in `src/sprites.ts`):
+  Map Pack water retinted to stagnant green → swamp base (reads as wetland, with drawn
+  reed tufts + the Map Pack cattail mapTile_119 as a rare accent); Tower Defense stones
+  (tilesheet r5 c20-22, slate-tinted) → rubble masonry chunks over drawn slabs;
+  `tanks/oilSpill_large` tinted near-black → crater blast scorch under the procedural pit.
+  Design rule: crater/rubble keep a GRASS base (damage on the land, not a new biome).
 - **Still procedural**: mine markers, hp/stock bars, anger auras, shadows, coast foam and
-  river banks, boat hulls, minimap blips - state overlays, not art.
+  river/swamp banks, reed tufts, crater pit rings, rubble slabs, minimap blips.
+  (No top-down blast-crater or landmine sprite exists anywhere in the Kenney collection -
+  audited 2026-06; Tank Pack mines are side-view.)
 - **UI chrome**: buttons across login/HUD/tray/spectator are 9-sliced UI Pack sprites
   (`.kbtn` in style.css) recolored with CSS filters — dark slate for normal chrome, the
   blue gradient hue-rotated to amber for primary actions. Crosshair 029 (faction-tinted)
@@ -38,6 +48,7 @@ the decent thing to do.
 | `projectiles/` | Topdown Tanks Remastered | `bullet*1.png` → shells in flight; `shot*.png` → muzzle flash / tracer. |
 | `fx/` | Explosion Pack | `regularExplosion00–08` → shell `drawBoom` animation; ground explosion + particles → mine booms. Frame-sequence, not single sprite. |
 | `mappack-atlas/` | Map Pack | **Texture atlas** (`mapPack_spritesheet.png` + `.xml` frame coords; `mapPack_tilesheet.png` is the contact sheet). Same cartoon style as the tanks. Covers what Topdown Tanks lacks: **water** (DeepSea/River/BoatTile), brown dirt + crater tiles, gray rock, lava, **castle → Base**, **tower → Pillbox**, extra trees/bushes/rocks. Tiles are named only `mapTile_NNN` — needs visual slicing to pick specific ones. |
+| `boats/` | Pirate Pack | `dinghyLarge1.png` → moored boat tiles (BoatTile) + the landing craft under a tank on water. Same cartoon style as the tank packs; more dinghy/ship variants in the source pack. |
 | `crosshair/` | Crosshair Pack | Aiming reticle for touch aim (`touch.ts`) and spectator. 6 outline styles. |
 | `mobile/joystick/` | Mobile Controls | Virtual stick + buttons for `touch.ts`. `joystick_circle_pad_*` (base) + `joystick_circle_nub_*` (thumb); `button_circle/diamond/...` for fire/action. |
 | `mobile/icons/` | Mobile Controls | HUD glyphs: `icon_crosshair`, `icon_fire`, `icon_cog` (NPC/builder), `icon_lock`, `icon_menu`, `icon_burst`, etc. |

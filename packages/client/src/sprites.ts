@@ -33,6 +33,18 @@ const FILES = {
   treeLarge: 'terrain/treeGreen_large.png',
   treeSmall: 'terrain/treeGreen_small.png',
 
+  // tread-mark decal (points north, like the tank sprites)
+  tracks: 'tanks/tracksSmall.png',
+
+  // dark splat, re-tinted into the crater scorch ring
+  oilLarge: 'tanks/oilSpill_large.png',
+
+  // Tower Defense tilesheet (sliced via TD_ATLAS below)
+  tdAtlas: 'tower-defense/towerDefense_tilesheet.png',
+
+  // rowboat (Pirate Pack dinghy): moored boat tiles + the landing craft under tanks
+  boat: 'boats/dinghyLarge1.png',
+
   // single-color bases that get faction-tinted below
   tankBase: 'tanks/tankBody_sand_outline.png',
   barrelBase: 'tanks/tankSand_barrel1_outline.png',
@@ -82,13 +94,20 @@ const ATLAS = {
   water: [64, 448, 64, 64], // mapTile_171: plain water
   waterSparkle: [0, 320, 64, 64], // mapTile_187: water with sparkles
   waterCrackle: [0, 256, 64, 64], // mapTile_188: water with wave crackle
-  dirt: [448, 640, 64, 64], // mapTile_084: plain dirt
-  dirtMarked: [448, 320, 64, 64], // mapTile_089: textured dirt
   rock: [768, 576, 64, 64], // mapTile_015: gray rock, textured
+  reeds: [320, 192, 64, 64], // mapTile_119: cattail clump
+} as const;
+
+/** Tower Defense tilesheet frames (uniform 23x13 grid of 64px tiles). */
+const TD_ATLAS = {
+  stone1: [1280, 320, 64, 64], // angular gray stones, three shapes
+  stone2: [1344, 320, 64, 64],
+  stone3: [1408, 320, 64, 64],
 } as const;
 
 type FileKey = keyof typeof FILES;
 type AtlasKey = keyof typeof ATLAS;
+type TdKey = keyof typeof TD_ATLAS;
 
 /** Derived (tinted) sprite keys, generated at load time. */
 type DerivedKey =
@@ -96,7 +115,9 @@ type DerivedKey =
   | 'waterDeepSparkle'
   | 'waterRiver'
   | 'waterRiverCrackle'
-  | 'craterBase'
+  | 'waterSwamp'
+  | 'waterSwampCrackle'
+  | 'scorch'
   | 'wallRock'
   | 'towerDawn'
   | 'towerDusk'
@@ -116,7 +137,7 @@ type DerivedKey =
   | 'crosshairDawn'
   | 'crosshairDusk';
 
-export type SpriteKey = FileKey | AtlasKey | DerivedKey;
+export type SpriteKey = FileKey | AtlasKey | TdKey | DerivedKey;
 
 export const sprites: { ready: boolean; images: Partial<Record<SpriteKey, CanvasImageSource>> } = {
   ready: false,
@@ -254,14 +275,26 @@ export async function loadSprites(
     img[key] = tinted(atlas, ATLAS[key], {});
   }
 
+  // overlay sprites get alpha-trimmed so painters can place them tightly:
+  // cattails muted toward swamp olive; Tower Defense stones slate-tinted to
+  // match the building/wall palette (rubble = collapsed masonry, not gravel)
+  img.reeds = tinted(atlas, ATLAS.reeds, { multiply: '#a9b07a', trim: true });
+  const td = sprites.images.tdAtlas!;
+  for (const key of Object.keys(TD_ATLAS) as TdKey[]) {
+    img[key] = tinted(td, TD_ATLAS[key], { multiply: '#8e95a4', trim: true });
+  }
+
   // --- water: Map Pack ice-blue retargeted to BOLO navy ---
   img.waterDeep = tinted(atlas, ATLAS.water, { color: '#39629c', multiply: '#46536e' });
   img.waterDeepSparkle = tinted(atlas, ATLAS.waterSparkle, { color: '#39629c', multiply: '#46536e' });
   img.waterRiver = tinted(atlas, ATLAS.water, { color: '#4577b8', multiply: '#7e90ad' });
   img.waterRiverCrackle = tinted(atlas, ATLAS.waterCrackle, { color: '#4577b8', multiply: '#7e90ad' });
+  // swamp: the same water retargeted to a stagnant green murk
+  img.waterSwamp = tinted(atlas, ATLAS.water, { color: '#48684e', multiply: '#76855f' });
+  img.waterSwampCrackle = tinted(atlas, ATLAS.waterCrackle, { color: '#48684e', multiply: '#76855f' });
 
   // --- terrain features ---
-  img.craterBase = tinted(atlas, ATLAS.dirtMarked, { multiply: '#9b8468' });
+  img.scorch = tinted(img.oilLarge!, null, { multiply: '#2a241c', trim: true });
   img.wallRock = tinted(atlas, ATLAS.rock, { multiply: '#8e95a4' });
 
   // --- faction structures ---

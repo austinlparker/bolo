@@ -85,14 +85,63 @@ state.pills.push(
 );
 // a boat tile + a tank riding a boat
 state.terrain[Math.floor(cy + 7) * MAP_SIZE + Math.floor(cx + 1)] = 10;
+// terrain feature sampler: rows of swamp / crater / rubble west of the base
+for (let i = 0; i < 3; i++) {
+  state.terrain[Math.floor(cy + 2) * MAP_SIZE + Math.floor(cx - 8 + i)] = 2; // swamp
+  state.terrain[Math.floor(cy + 3) * MAP_SIZE + Math.floor(cx - 8 + i)] = 3; // crater
+  state.terrain[Math.floor(cy + 4) * MAP_SIZE + Math.floor(cx - 8 + i)] = 6; // rubble
+}
 mkTank(5, 'marine.test', 'dusk', cx - 7, cy + 6.5, 0.9, { onBoat: true });
+
+/** Drive your tank in from the west across warmup frames so tread decals get laid down. */
+function driveIn(renderer: InstanceType<typeof Renderer>, finalNow: number): void {
+  const me = state.tanks.get(1)!.cur as { x: number };
+  for (let i = 0; i <= 20; i++) {
+    me.x = cx - 7 + (7 * i) / 20;
+    renderer.frame(state, finalNow - (20 - i) * 150);
+  }
+}
 
 const canvas = createCanvas(640, 420) as unknown as HTMLCanvasElement;
 const renderer = new Renderer(canvas);
 renderer.scale = 48;
-renderer.frame(state, Date.now());
+let now = Date.now();
+driveIn(renderer, now);
+renderer.frame(state, now);
 writeFileSync('/tmp/bolo-preview-game.png', (canvas as any).toBuffer('image/png'));
 console.log('wrote /tmp/bolo-preview-game.png');
+
+// desktop-sized frame at the real game scale, to check zoom + fog of war
+(globalThis as any).innerWidth = 1440;
+(globalThis as any).innerHeight = 900;
+const desktop = createCanvas(1440, 900) as unknown as HTMLCanvasElement;
+const desktopRenderer = new Renderer(desktop);
+now = Date.now();
+driveIn(desktopRenderer, now);
+desktopRenderer.frame(state, now);
+writeFileSync('/tmp/bolo-preview-desktop.png', (desktop as any).toBuffer('image/png'));
+console.log('wrote /tmp/bolo-preview-desktop.png');
+
+// magnified terrain study: synthetic swamp/crater/rubble rows on grass, 8x
+{
+  const { TileCache: TC, TILE_PX: TP } = await import('../src/tiles');
+  const tstate = new GameState();
+  tstate.terrain.fill(7); // grass
+  for (let x = 10; x < 16; x++) {
+    tstate.terrain[10 * MAP_SIZE + x] = 2; // swamp
+    tstate.terrain[11 * MAP_SIZE + x] = 3; // crater
+    tstate.terrain[12 * MAP_SIZE + x] = 6; // rubble
+  }
+  tstate.mapVersion = 1;
+  const tcache = new TC();
+  tcache.sync(tstate as any);
+  const zoom = createCanvas(9 * TP * 8, 5 * TP * 8);
+  const zctx = zoom.getContext('2d');
+  zctx.imageSmoothingEnabled = false;
+  zctx.drawImage(tcache.canvas as any, 9 * TP, 9 * TP, 9 * TP, 5 * TP, 0, 0, zoom.width, zoom.height);
+  writeFileSync('/tmp/bolo-preview-tiles.png', zoom.toBuffer('image/png'));
+  console.log('wrote /tmp/bolo-preview-tiles.png');
+}
 
 // zoomed-out terrain overview (tile cache scaled down)
 const over = createCanvas(1024, 1024);

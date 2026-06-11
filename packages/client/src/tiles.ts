@@ -116,7 +116,7 @@ export class TileCache {
         this.paintTrees(ctx, px, py, h);
         break;
       case Terrain.Swamp:
-        this.paintSwamp(ctx, px, py, h, h2);
+        this.paintSwamp(state, ctx, px, py, x, y, h, h2);
         break;
       case Terrain.Crater:
         this.paintCrater(ctx, px, py, h, h2);
@@ -222,6 +222,14 @@ export class TileCache {
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(rot);
+    const img = sprites.ready ? sprites.images.boat : undefined;
+    if (img) {
+      // dinghy is 20x38 pointing north; sized so any mooring angle stays
+      // inside the tile (neighbor repaints would clip overflow)
+      ctx.drawImage(img, -4, -7.6, 8, 15.2);
+      ctx.restore();
+      return;
+    }
     // hull
     ctx.fillStyle = '#6e4a26';
     ctx.beginPath();
@@ -236,6 +244,20 @@ export class TileCache {
     ctx.fillStyle = '#6e4a26';
     ctx.fillRect(-1, -2.4, 2, 4.8);
     ctx.restore();
+  }
+
+  /** Draw a trimmed overlay sprite centered at (cx, cy), longest side `sizePx`, aspect kept. */
+  private overlay(
+    ctx: CanvasRenderingContext2D,
+    img: CanvasImageSource,
+    cx: number,
+    cy: number,
+    sizePx: number,
+  ): void {
+    const iw = (img as HTMLCanvasElement).width;
+    const ih = (img as HTMLCanvasElement).height;
+    const k = sizePx / Math.max(iw, ih);
+    ctx.drawImage(img, cx - (iw * k) / 2, cy - (ih * k) / 2, iw * k, ih * k);
   }
 
   /** Subtle dark wash so the bright Kenney tiles sit in our moodier palette. */
@@ -290,60 +312,120 @@ export class TileCache {
     }
   }
 
-  private paintSwamp(ctx: CanvasRenderingContext2D, px: number, py: number, h: number, h2: number): void {
-    const img = sprites.ready ? sprites.images.grass1 : undefined;
+  /**
+   * Swamp reads as WATER first: stagnant green murk with grassy islets and
+   * reeds growing out of them, dark-banked where it meets dry land.
+   */
+  private paintSwamp(
+    state: GameState,
+    ctx: CanvasRenderingContext2D,
+    px: number,
+    py: number,
+    x: number,
+    y: number,
+    h: number,
+    h2: number,
+  ): void {
+    const img = sprites.ready
+      ? sprites.images[(h & 3) === 0 ? 'waterSwampCrackle' : 'waterSwamp']
+      : undefined;
     if (img) {
       ctx.drawImage(img, px, py, T, T);
-      this.wash(ctx, px, py, 0.38);
+      this.wash(ctx, px, py, 0.1);
     } else {
-      ctx.fillStyle = '#44552f';
+      ctx.fillStyle = '#4a5f47';
       ctx.fillRect(px, py, T, T);
     }
-    // murky pools, in the same navy family as the recolored pack water
-    ctx.fillStyle = '#37526b';
-    ctx.beginPath();
-    ctx.ellipse(px + 4 + (h % 7), py + 4 + ((h >> 4) % 7), 4, 2.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(px + 5 + (h2 % 7), py + 5 + ((h2 >> 4) % 7), 3, 2, 0, 0, Math.PI * 2);
-    ctx.fill();
-    // reeds
-    ctx.strokeStyle = '#5c6e3a';
-    ctx.lineWidth = 1;
-    const rx = px + 3 + (h % 10);
-    const ry = py + 4 + ((h >> 6) % 8);
-    ctx.beginPath();
-    ctx.moveTo(rx, ry + 4);
-    ctx.lineTo(rx, ry);
-    ctx.moveTo(rx + 2, ry + 4);
-    ctx.lineTo(rx + 2.5, ry + 1);
-    ctx.stroke();
+
+    // grassy islets breaking the water surface; reeds grow out of them
+    const islets: [number, number, number][] = [
+      [px + 4 + (h % 8), py + 4 + ((h >>> 4) % 8), 3.4],
+      [px + 5 + (h2 % 7), py + 5 + ((h2 >>> 4) % 7), 2.6],
+    ];
+    for (const [ix, iy, ir] of islets) {
+      ctx.fillStyle = '#42603a';
+      ctx.beginPath();
+      ctx.ellipse(ix + 0.6, iy + 0.8, ir, ir * 0.62, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#54744a';
+      ctx.beginPath();
+      ctx.ellipse(ix, iy, ir, ir * 0.62, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // reed tufts fanning out of the islets; drawn blades read better at 16px
+    // than any sprite — the cattail sprite appears only as a rare accent
+    const tuft = (tx: number, ty: number) => {
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#3f5c33';
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(tx - 1.5, ty - 4);
+      ctx.moveTo(tx + 1.5, ty);
+      ctx.lineTo(tx + 2.7, ty - 4.5);
+      ctx.stroke();
+      ctx.strokeStyle = '#74904c';
+      ctx.beginPath();
+      ctx.moveTo(tx + 0.7, ty);
+      ctx.lineTo(tx + 0.5, ty - 5.2);
+      ctx.stroke();
+    };
+    tuft(islets[0][0], islets[0][1]);
+    if ((h2 & 3) !== 0) tuft(islets[1][0], islets[1][1]);
+    if ((h & 7) === 0 && sprites.ready && sprites.images.reeds) {
+      this.overlay(ctx, sprites.images.reeds, islets[1][0], islets[1][1] - 2, 6);
+    }
+
+    // dark banks against dry land, so the swamp reads as a depression
+    const isDry = (tx: number, ty: number) => {
+      const t = this.terrainAt(state, tx, ty);
+      return t !== Terrain.DeepSea && t !== Terrain.River && t !== Terrain.BoatTile && t !== Terrain.Swamp;
+    };
+    ctx.fillStyle = 'rgba(24,36,26,0.5)';
+    if (isDry(x, y - 1)) ctx.fillRect(px, py, T, 2);
+    if (isDry(x, y + 1)) ctx.fillRect(px, py + T - 2, T, 2);
+    if (isDry(x - 1, y)) ctx.fillRect(px, py, 2, T);
+    if (isDry(x + 1, y)) ctx.fillRect(px + T - 2, py, 2, T);
   }
 
+  /**
+   * Crater is blast damage ON the land, not a different biome: the grass
+   * stays, with a scorch splat and a deep displaced-earth pit on top.
+   */
   private paintCrater(ctx: CanvasRenderingContext2D, px: number, py: number, h: number, h2: number): void {
-    if (sprites.ready && sprites.images.craterBase) {
-      ctx.drawImage(sprites.images.craterBase, px, py, T, T);
-      this.wash(ctx, px, py, 0.12);
-    } else {
-      ctx.fillStyle = '#54432f';
-      ctx.fillRect(px, py, T, T);
-    }
+    this.paintGrass(ctx, px, py, h, h2);
     const cx = px + T / 2 + ((h % 3) - 1);
-    const cy = py + T / 2 + (((h >> 2) % 3) - 1);
-    // rim highlight
-    ctx.fillStyle = '#6b563c';
+    const cy = py + T / 2 + (((h >>> 2) % 3) - 1);
+    // blast scorch (tinted oil-spill splat) chars the grass around the pit
+    const scorch = sprites.ready ? sprites.images.scorch : undefined;
+    if (scorch) {
+      ctx.save();
+      ctx.globalAlpha = 0.75;
+      this.overlay(ctx, scorch, cx, cy, 14);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = 'rgba(30,24,16,0.5)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // displaced-earth rim, lit from the top-left
+    ctx.fillStyle = '#5c4a30';
     ctx.beginPath();
-    ctx.arc(cx, cy, 6.5, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#75603f';
+    ctx.beginPath();
+    ctx.arc(cx - 0.7, cy - 0.7, 5.4, 0, Math.PI * 2);
     ctx.fill();
     // pit
-    ctx.fillStyle = '#3a2d1f';
+    ctx.fillStyle = '#33271a';
     ctx.beginPath();
-    ctx.arc(cx, cy, 4.6, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 4.4, 0, Math.PI * 2);
     ctx.fill();
-    // deepest shadow, offset
-    ctx.fillStyle = '#2a2016';
+    // deepest shadow biased to the lit side, so the hole reads concave
+    ctx.fillStyle = '#1f1810';
     ctx.beginPath();
-    ctx.arc(cx + 1, cy + 1, 2.6, 0, Math.PI * 2);
+    ctx.arc(cx - 0.8, cy - 0.8, 2.7, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -400,13 +482,37 @@ export class TileCache {
     }
   }
 
+  /**
+   * Rubble is a COLLAPSED BUILDING: broken slabs in the wall palette strewn
+   * over the grass it stood on, with smaller masonry chunks between.
+   */
   private paintRubble(ctx: CanvasRenderingContext2D, px: number, py: number, h: number, h2: number): void {
-    ctx.fillStyle = '#5d564c';
-    ctx.fillRect(px, py, T, T);
-    for (let i = 0; i < 5; i++) {
+    this.paintGrass(ctx, px, py, h, h2);
+    // big angular slabs, tilted like fallen wall sections
+    const slabs = 2 + (h & 1);
+    for (let i = 0; i < slabs; i++) {
       const hh = hash32(h, h2, i);
-      ctx.fillStyle = (hh & 1) === 0 ? '#6e675c' : '#4a443c';
-      ctx.fillRect(px + (hh % 13), py + ((hh >> 4) % 13), 2 + ((hh >> 8) % 3), 2 + ((hh >> 10) % 2));
+      const sx = px + 4 + (hh % 8);
+      const sy = py + 4 + ((hh >>> 4) % 8);
+      const w = 5 + ((hh >>> 8) % 4);
+      const ht = 4 + ((hh >>> 12) % 3);
+      const rot = (((hh >>> 16) % 7) - 3) * 0.16;
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(rot);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillRect(-w / 2 + 1, -ht / 2 + 1.2, w, ht);
+      ctx.fillStyle = (hh & 2) === 0 ? '#454c5b' : '#3d4452';
+      ctx.fillRect(-w / 2, -ht / 2, w, ht);
+      ctx.fillStyle = '#5b6478';
+      ctx.fillRect(-w / 2, -ht / 2, w, 1.5);
+      ctx.restore();
+    }
+    // smaller masonry chunks (Tower Defense stones, slate-tinted)
+    if (sprites.ready && sprites.images.stone1) {
+      const stones = [sprites.images.stone1, sprites.images.stone2!, sprites.images.stone3!];
+      this.overlay(ctx, stones[h % 3], px + 4 + (h % 8), py + 4 + ((h >>> 5) % 8), 5);
+      if ((h2 & 3) !== 0) this.overlay(ctx, stones[h2 % 3], px + 5 + (h2 % 7), py + 5 + ((h2 >>> 5) % 7), 4);
     }
   }
 

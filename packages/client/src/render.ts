@@ -7,6 +7,7 @@ import {
   MAP_SIZE,
   PILL_MAX_HP,
   SHELL_RANGE,
+  PLAYER_VIEW_RADIUS,
   TANK_RADIUS,
   TICK_MS,
 } from '@bolo/shared';
@@ -37,6 +38,10 @@ export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private tiles = new TileCache();
   private vignette: CanvasGradient | null = null;
+  private fog: CanvasGradient | null = null;
+  /** fading tread-mark decals stamped behind moving tanks */
+  private trackMarks: { x: number; y: number; dir: number; at: number }[] = [];
+  private lastTrack = new Map<number, { x: number; y: number }>();
   private dpr = 1;
   /** viewport size in CSS pixels */
   private vw = 0;
@@ -59,8 +64,9 @@ export class Renderer {
         canvas.style.height = `${this.vh}px`;
       }
       // zoom out a touch on small screens so enough battlefield is visible
-      this.scale = Math.min(this.vw, this.vh) < 540 ? 20 : 26;
+      this.scale = Math.min(this.vw, this.vh) < 540 ? 22 : 34;
       this.vignette = null;
+      this.fog = null;
     };
     addEventListener('resize', fit);
     fit();
@@ -99,6 +105,8 @@ export class Renderer {
       h / 2 + (wy - this.camY) * this.scale,
     ];
     const onScreen = (px: number, py: number, m = 60) => px > -m && py > -m && px < w + m && py < h + m;
+
+    this.drawTracks(state, now, toScreen, onScreen);
 
     // known mines
     for (const i of state.mines) {
@@ -181,15 +189,84 @@ export class Renderer {
       this.drawBoom(px, py, t, b.kind, hash32(Math.round(b.x * 7), Math.round(b.y * 7)));
     }
 
-    // soft vignette for atmosphere
-    if (!this.vignette) {
-      const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.45, w / 2, h / 2, Math.max(w, h) * 0.75);
-      g.addColorStop(0, 'rgba(0,0,0,0)');
-      g.addColorStop(1, 'rgba(0,0,0,0.42)');
-      this.vignette = g;
+    if (meInterp) {
+      // fog of war: vision fades out and dies just inside the server's entity
+      // cull ring (PLAYER_VIEW_RADIUS), so the screen edge can't out-see your
+      // intel feed and tanks never visibly pop in at the cull boundary
+      if (!this.fog) {
+        const inner = (PLAYER_VIEW_RADIUS - 10) * this.scale;
+        const outer = (PLAYER_VIEW_RADIUS - 2) * this.scale;
+        const g = ctx.createRadialGradient(w / 2, h / 2, inner, w / 2, h / 2, outer);
+        g.addColorStop(0, 'rgba(7,8,12,0)');
+        g.addColorStop(0.55, 'rgba(7,8,12,0.55)');
+        g.addColorStop(1, 'rgba(7,8,12,0.97)');
+        this.fog = g;
+      }
+      ctx.fillStyle = this.fog;
+      ctx.fillRect(0, 0, w, h);
+    } else {
+      // soft vignette for atmosphere (spectating / no tank)
+      if (!this.vignette) {
+        const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.45, w / 2, h / 2, Math.max(w, h) * 0.75);
+        g.addColorStop(0, 'rgba(0,0,0,0)');
+        g.addColorStop(1, 'rgba(0,0,0,0.42)');
+        this.vignette = g;
+      }
+      ctx.fillStyle = this.vignette;
+      ctx.fillRect(0, 0, w, h);
     }
-    ctx.fillStyle = this.vignette;
-    ctx.fillRect(0, 0, w, h);
+  }
+
+  /** Stamp tread marks behind moving tanks and draw them fading out. */
+  private drawTracks(
+    state: GameState,
+    now: number,
+    toScreen: (x: number, y: number) => [number, number],
+    onScreen: (px: number, py: number, m?: number) => boolean,
+  ): void {
+    const FADE_MS = 9000;
+    const SPACING = 0.55; // tiles of travel between stamps
+    const MAX_MARKS = 600;
+
+    for (const id of this.lastTrack.keys()) if (!state.tanks.has(id)) this.lastTrack.delete(id);
+    for (const it of state.tanks.values()) {
+      const t = it.cur;
+      if (!t.alive || t.onBoat) {
+        this.lastTrack.delete(t.id);
+        continue;
+      }
+      const p = state.lerpTank(it, now, TICK_MS);
+      const last = this.lastTrack.get(t.id);
+      if (!last) {
+        this.lastTrack.set(t.id, { x: p.x, y: p.y });
+        continue;
+      }
+      if (Math.hypot(p.x - last.x, p.y - last.y) >= SPACING) {
+        this.trackMarks.push({ x: p.x, y: p.y, dir: p.dir, at: now });
+        last.x = p.x;
+        last.y = p.y;
+      }
+    }
+    if (this.trackMarks.length > MAX_MARKS) this.trackMarks.splice(0, this.trackMarks.length - MAX_MARKS);
+    if (this.trackMarks.length && now - this.trackMarks[0].at >= FADE_MS) {
+      this.trackMarks = this.trackMarks.filter((m) => now - m.at < FADE_MS);
+    }
+
+    const img = sprites.ready ? sprites.images.tracks : undefined;
+    if (!img) return;
+    const ctx = this.ctx;
+    const tw = TANK_RADIUS * 2.3 * this.scale; // tread width ≈ hull width
+    const th = (tw * 52) / 37; // sprite is 37x52, points north
+    for (const m of this.trackMarks) {
+      const [px, py] = toScreen(m.x, m.y);
+      if (!onScreen(px, py, 30)) continue;
+      ctx.save();
+      ctx.globalAlpha = 0.38 * (1 - (now - m.at) / FADE_MS);
+      ctx.translate(px, py);
+      ctx.rotate(m.dir + Math.PI / 2);
+      ctx.drawImage(img, -tw / 2, -th / 2, tw, th);
+      ctx.restore();
+    }
   }
 
   // ---------- entities ----------
@@ -222,16 +299,24 @@ export class Renderer {
 
     if (t.onBoat) {
       // landing craft under the tank
+      const boat = sprites.ready ? sprites.images.boat : undefined;
       ctx.save();
-      ctx.rotate(p.dir);
-      ctx.fillStyle = '#6e4a26';
-      ctx.beginPath();
-      ctx.ellipse(0, 0, r * 2.1, r * 1.45, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#9a7644';
-      ctx.beginPath();
-      ctx.ellipse(0, 0, r * 1.75, r * 1.15, 0, 0, Math.PI * 2);
-      ctx.fill();
+      if (boat) {
+        ctx.rotate(p.dir + Math.PI / 2); // dinghy points north
+        const bw = r * 2.4;
+        const bh = (bw * 38) / 20;
+        ctx.drawImage(boat, -bw / 2, -bh / 2, bw, bh);
+      } else {
+        ctx.rotate(p.dir);
+        ctx.fillStyle = '#6e4a26';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, r * 2.1, r * 1.45, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#9a7644';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, r * 1.75, r * 1.15, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.restore();
     }
 
@@ -366,7 +451,7 @@ export class Renderer {
       // feet on the faction ring
       const iw = (img as HTMLCanvasElement).width;
       const ih = (img as HTMLCanvasElement).height;
-      const h = s * 0.48;
+      const h = s * 0.55;
       const w = (h * iw) / ih;
       // working: rock side to side like he's putting his back into it
       if (phase === 'working') ctx.rotate(Math.sin(now / 120) * 0.3);
