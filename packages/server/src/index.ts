@@ -4,6 +4,7 @@
  */
 import { mintToken, pdsFromDidDoc, resolveDidDoc, resolveHandle, verifyAtprotoSession } from './auth';
 import { type Env, sessionSecret } from './env';
+import { clientMetadata, handleOauthCallback, handleOauthLogin } from './oauth';
 
 export { GameDO } from './do/game';
 
@@ -33,6 +34,17 @@ export default {
 
     if (url.pathname === '/ws') {
       return world().fetch(request);
+    }
+
+    // atproto OAuth (human sign-in)
+    if (url.pathname === '/oauth/client-metadata.json') {
+      return json(clientMetadata(url.origin));
+    }
+    if (url.pathname === '/oauth/login') {
+      return handleOauthLogin(request, env);
+    }
+    if (url.pathname === '/oauth/callback') {
+      return handleOauthCallback(request, env);
     }
 
     if (url.pathname === '/api/war' || url.pathname === '/api/status') {

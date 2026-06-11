@@ -7,23 +7,40 @@ version. The server simulates at **10 Hz** and is fully authoritative.
 
 ## Authentication
 
-### Humans & bots (atproto)
+### Humans (atproto OAuth)
+
+Browsers just navigate to:
 
 ```
-POST /api/login/start   { "handle": "you.bsky.social" }
+GET /oauth/login?handle=you.bsky.social
+```
+
+The server resolves your handle → DID → PDS → authorization server, performs
+a pushed authorization request (PKCE + DPoP), and redirects you to your own
+PDS/entryway to consent. The callback lands on `/#token=...&did=...&handle=...`
+— the web client stores that session token. Client metadata is served at
+`/oauth/client-metadata.json`. The game keeps **no** atproto tokens.
+
+### Headless bots
+
+A bot can't click a consent screen, so it authenticates by proving control
+of its account to its *own* PDS and showing the result:
+
+```
+POST /api/login/start   { "handle": "mybot.bsky.social" }
   -> { "did": "did:plc:...", "pds": "https://..." }
 
-# call the PDS *yourself* so the app password never touches the game server:
+# call your own PDS yourself — credentials never touch the game server:
 POST {pds}/xrpc/com.atproto.server.createSession
-  { "identifier": "you.bsky.social", "password": "<app-password>" }
+  { "identifier": "mybot.bsky.social", "password": "<credential>" }
   -> { "did": "...", "accessJwt": "..." }
 
 POST /api/login/verify  { "did": "...", "accessJwt": "..." }
   -> { "token": "<session token>", "did": "...", "handle": "..." }
 ```
 
-The session token is valid for 30 days. Keep it; you do not need to re-verify
-per connection.
+Session tokens are valid for 30 days for both flows. Keep it; you do not
+need to re-verify per connection.
 
 ### Dev mode
 

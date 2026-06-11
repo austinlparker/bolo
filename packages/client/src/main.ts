@@ -2,7 +2,13 @@ import './style.css';
 import { FACTION_NAMES, type ServerMsg } from '@bolo/shared';
 import { Hud } from './hud';
 import { Input } from './input';
-import { clearCredentials, savedCredentials, showLogin, type Credentials } from './login';
+import {
+  clearCredentials,
+  credentialsFromFragment,
+  savedCredentials,
+  showLogin,
+  type Credentials,
+} from './login';
 import { Net } from './net';
 import { Renderer } from './render';
 import { startSpectator } from './spectator';
@@ -17,8 +23,9 @@ if (location.pathname.startsWith('/map')) {
 }
 
 async function startPlayer(): Promise<void> {
-  let creds: Credentials | null = savedCredentials();
-  if (!creds) creds = await showLogin(root);
+  const fromOauth = credentialsFromFragment();
+  let creds: Credentials | null = fromOauth.creds ?? savedCredentials();
+  if (!creds) creds = await showLogin(root, fromOauth.error);
 
   const canvas = document.createElement('canvas');
   canvas.className = 'game';

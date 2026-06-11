@@ -80,17 +80,21 @@ storage; no external database.
 
 ## Signing in with atproto
 
-Production sign-in uses an [app password](https://bsky.app/settings/app-passwords):
+Human sign-in is **atproto OAuth** — no passwords, ever. Enter your handle,
+get redirected to your own PDS/entryway to consent, and you're in. Under the
+hood the server runs the full spec dance (handle → DID → PDS → authorization
+server discovery, PAR, PKCE, DPoP with nonce retry), verifies that the
+authenticated DID's own PDS endorses the issuer that vouched for it, mints a
+30-day HMAC session token, and **discards the atproto tokens** — the game
+never acts on your PDS, so it keeps no OAuth credentials at all. Interim flow
+state lives in an encrypted HttpOnly cookie; there is no server-side session
+store. On localhost the atproto loopback-client convention is used, so OAuth
+works in local dev too (you land on `:8787`, the wrangler origin).
 
-1. The server resolves your handle → DID → PDS.
-2. **Your browser** calls `com.atproto.server.createSession` against *your own
-   PDS* — the password never touches the game server.
-3. The game server verifies the returned access JWT against your PDS
-   (`getSession`), confirms the DID, and mints its own HMAC session token.
-
-Bots authenticate the same way (see `docs/PROTOCOL.md`). Migrating to full
-atproto OAuth is the planned next step; the session-token layer is what it
-will plug into.
+Headless bots can't drive a browser consent screen; they authenticate by
+creating a session with *their own PDS* themselves and presenting the access
+JWT to `/api/login/verify`, which the server validates against that PDS (see
+`docs/PROTOCOL.md`). The game server never sees a bot credential either.
 
 ## Design divergences from original Bolo
 
@@ -105,7 +109,6 @@ Deliberate adaptations for a persistent, two-faction world:
 
 ## Roadmap
 
-- atproto OAuth (replace app-password flow)
 - Boat improvements (builder ferrying, deep-sea travel)
 - Per-war terrain inheritance (battle scars carrying into the next island)
 - Leaderboard page backed by the existing `/api/war` data
