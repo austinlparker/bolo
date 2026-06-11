@@ -494,7 +494,10 @@ body.touch-mode #touch-ui {
   height: 124px;
   border-radius: 50%;
   border: 2px solid var(--line-bright);
-  background: rgba(13, 16, 22, 0.5);
+  background:
+    url('/assets/mobile/joystick/joystick_circle_pad_a.png') center / cover no-repeat,
+    rgba(13, 16, 22, 0.5);
+  opacity: 0.92;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
 }
 

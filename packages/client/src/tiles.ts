@@ -5,7 +5,36 @@
  * repaints its neighbors.
  */
 import { hash32, MAP_SIZE, Terrain } from '@bolo/shared';
+import { sprites, type SpriteKey } from './sprites';
 import type { GameState } from './state';
+
+/** Pick the road tile for a set of connections (Kenney connection set). */
+function roadSprite(n: boolean, e: boolean, s: boolean, w: boolean): SpriteKey {
+  const count = +n + +e + +s + +w;
+  if (count === 4) return 'roadCross';
+  if (count === 3) {
+    if (!s) return 'roadSplitN'; // straight E-W, branch N
+    if (!n) return 'roadSplitS';
+    if (!w) return 'roadSplitE';
+    return 'roadSplitW';
+  }
+  if (count === 2) {
+    if (n && s) return 'roadNS';
+    if (e && w) return 'roadEW';
+    if (n && e) return 'roadNE';
+    if (n && w) return 'roadNW';
+    if (s && e) return 'roadSE';
+    return 'roadSW';
+  }
+  if (count === 1) {
+    // a dead end: the road arrives from the connected side and fades out
+    if (s) return 'roadEndN';
+    if (n) return 'roadEndS';
+    if (e) return 'roadEndW';
+    return 'roadEndE';
+  }
+  return 'roadCross'; // isolated pad (e.g. a base plaza)
+}
 
 export const TILE_PX = 16;
 
@@ -90,7 +119,7 @@ export class TileCache {
         this.paintSwamp(ctx, px, py, h, h2);
         break;
       case Terrain.Crater:
-        this.paintCrater(ctx, px, py, h);
+        this.paintCrater(ctx, px, py, h, h2);
         break;
       case Terrain.Road:
         this.paintRoad(state, ctx, px, py, x, y, h);
@@ -194,7 +223,19 @@ export class TileCache {
     ctx.restore();
   }
 
+  /** Subtle dark wash so the bright Kenney tiles sit in our moodier palette. */
+  private wash(ctx: CanvasRenderingContext2D, px: number, py: number, alpha = 0.16): void {
+    ctx.fillStyle = `rgba(12, 20, 16, ${alpha})`;
+    ctx.fillRect(px, py, T, T);
+  }
+
   private paintGrass(ctx: CanvasRenderingContext2D, px: number, py: number, h: number, h2: number): void {
+    const img = sprites.ready ? sprites.images[(h & 3) === 0 ? 'grass2' : 'grass1'] : undefined;
+    if (img) {
+      ctx.drawImage(img, px, py, T, T);
+      this.wash(ctx, px, py);
+      return;
+    }
     ctx.fillStyle = (h & 3) === 0 ? '#43683a' : '#47703d';
     ctx.fillRect(px, py, T, T);
     ctx.fillStyle = '#518147';
@@ -206,7 +247,7 @@ export class TileCache {
   }
 
   private paintTrees(ctx: CanvasRenderingContext2D, px: number, py: number, h: number): void {
-    // 2-3 canopies with shadow + highlight, jittered per tile
+    // 2-3 canopies with shadow, jittered per tile
     const canopies = 2 + (h % 2);
     for (let i = 0; i < canopies; i++) {
       const hh = hash32(h, i);
@@ -217,6 +258,12 @@ export class TileCache {
       ctx.beginPath();
       ctx.arc(cx + 1.5, cy + 1.5, r, 0, Math.PI * 2);
       ctx.fill();
+      const img = sprites.ready ? sprites.images[(hh & 1) === 0 ? 'treeLarge' : 'treeSmall'] : undefined;
+      if (img) {
+        // the sprite canopy doesn't fill its frame; oversize to compensate
+        ctx.drawImage(img, cx - r * 1.5, cy - r * 1.5, r * 3, r * 3);
+        continue;
+      }
       ctx.fillStyle = (hh & 1) === 0 ? '#2c5530' : '#2f5c34';
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -229,8 +276,14 @@ export class TileCache {
   }
 
   private paintSwamp(ctx: CanvasRenderingContext2D, px: number, py: number, h: number, h2: number): void {
-    ctx.fillStyle = '#44552f';
-    ctx.fillRect(px, py, T, T);
+    const img = sprites.ready ? sprites.images.grass1 : undefined;
+    if (img) {
+      ctx.drawImage(img, px, py, T, T);
+      this.wash(ctx, px, py, 0.38);
+    } else {
+      ctx.fillStyle = '#44552f';
+      ctx.fillRect(px, py, T, T);
+    }
     // murky pools
     ctx.fillStyle = '#3d5c52';
     ctx.beginPath();
@@ -252,9 +305,15 @@ export class TileCache {
     ctx.stroke();
   }
 
-  private paintCrater(ctx: CanvasRenderingContext2D, px: number, py: number, h: number): void {
-    ctx.fillStyle = '#54432f';
-    ctx.fillRect(px, py, T, T);
+  private paintCrater(ctx: CanvasRenderingContext2D, px: number, py: number, h: number, h2: number): void {
+    // scarred grass rather than a brown square: battle damage on the land
+    if (sprites.ready && sprites.images.grass1) {
+      this.paintGrass(ctx, px, py, h, h2);
+      this.wash(ctx, px, py, 0.22);
+    } else {
+      ctx.fillStyle = '#54432f';
+      ctx.fillRect(px, py, T, T);
+    }
     const cx = px + T / 2 + ((h % 3) - 1);
     const cy = py + T / 2 + (((h >> 2) % 3) - 1);
     // rim highlight
@@ -283,8 +342,6 @@ export class TileCache {
     y: number,
     h: number,
   ): void {
-    // pave on top of a grass shoulder, connecting to neighboring roads
-    this.paintGrass(ctx, px, py, h, hash32(h, 3));
     const isRoad = (tx: number, ty: number) => {
       const t = this.terrainAt(state, tx, ty);
       return t === Terrain.Road || t === Terrain.Building || t === Terrain.ShotBuilding;
@@ -293,6 +350,18 @@ export class TileCache {
     const s = isRoad(x, y + 1);
     const w = isRoad(x - 1, y);
     const e = isRoad(x + 1, y);
+
+    if (sprites.ready) {
+      const img = sprites.images[roadSprite(n, e, s, w)];
+      if (img) {
+        ctx.drawImage(img, px, py, T, T);
+        this.wash(ctx, px, py);
+        return;
+      }
+    }
+
+    // procedural fallback: pave on top of a grass shoulder
+    this.paintGrass(ctx, px, py, h, hash32(h, 3));
     const half = T / 2;
     const lane = 10; // road width in px
     const off = (T - lane) / 2;
@@ -328,6 +397,7 @@ export class TileCache {
   }
 
   private paintBuilding(ctx: CanvasRenderingContext2D, px: number, py: number, damaged: boolean): void {
+    // deliberately procedural: walls read as fortifications, not scenery
     // beveled top-down block
     ctx.fillStyle = '#23262e';
     ctx.fillRect(px, py, T, T);

@@ -4,7 +4,7 @@
  * visual changes without a browser:
  *   pnpm --filter @bolo/client exec tsx scripts/preview.ts
  */
-import { createCanvas } from '@napi-rs/canvas';
+import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { writeFileSync } from 'node:fs';
 import { generateMap, MAP_SIZE } from '@bolo/shared';
 
@@ -22,6 +22,14 @@ import { generateMap, MAP_SIZE } from '@bolo/shared';
 
 const { Renderer } = await import('../src/render');
 const { GameState } = await import('../src/state');
+const { loadSprites } = await import('../src/sprites');
+
+// load the Kenney art from disk (same files the browser fetches from /assets)
+const assetRoot = new URL('../public/assets/', import.meta.url).pathname;
+await loadSprites(
+  (url) => loadImage(url) as unknown as Promise<CanvasImageSource>,
+  assetRoot,
+);
 
 const seed = Number(process.argv[2] ?? 12345);
 const gen = generateMap(seed);

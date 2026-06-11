@@ -10,6 +10,7 @@ import {
 } from '@bolo/shared';
 import { Net } from './net';
 import { FACTION_COLORS } from './render';
+import { loadSprites } from './sprites';
 import { GameState } from './state';
 import { TILE_PX, TileCache } from './tiles';
 import { warLine } from './hud';
@@ -33,6 +34,7 @@ export function startSpectator(root: HTMLElement): void {
 
   const state = new GameState();
   const tiles = new TileCache();
+  void loadSprites().then(() => state.mapVersion++).catch(() => {});
   let latest: SpectateMsg | null = null;
   let history: WarRecord[] = [];
 

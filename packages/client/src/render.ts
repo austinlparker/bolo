@@ -8,6 +8,7 @@ import {
   TANK_RADIUS,
   TICK_MS,
 } from '@bolo/shared';
+import { BOOM_FRAMES, sprites, type SpriteKey } from './sprites';
 import type { GameState, InterpTank } from './state';
 import { TILE_PX, TileCache } from './tiles';
 
@@ -119,21 +120,31 @@ export class Renderer {
       this.drawTank(state, it, now, toScreen, onScreen);
     }
 
-    // shells: tracer + trail + muzzle flash on freshly fired ones
+    // shells: tracer trail + bullet sprite (or a dot pre-load)
     for (const s of state.shells) {
       const [px, py] = toScreen(s.x, s.y);
       if (!onScreen(px, py, 20)) continue;
       const tail = 0.55 * this.scale;
-      ctx.strokeStyle = 'rgba(255,224,160,0.5)';
+      ctx.strokeStyle = 'rgba(255,224,160,0.45)';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(px - Math.cos(s.dir) * tail, py - Math.sin(s.dir) * tail);
       ctx.lineTo(px, py);
       ctx.stroke();
-      ctx.fillStyle = '#fff4d0';
-      ctx.beginPath();
-      ctx.arc(px, py, 2.4, 0, Math.PI * 2);
-      ctx.fill();
+      const bullet = sprites.ready ? sprites.images.bullet : undefined;
+      if (bullet) {
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(s.dir + Math.PI / 2); // sprite points north
+        const k = this.scale / 38;
+        ctx.drawImage(bullet, -2 * k * 2.4, -5 * k * 2.4, 4 * k * 2.4, 10 * k * 2.4);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = '#fff4d0';
+        ctx.beginPath();
+        ctx.arc(px, py, 2.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     // explosions
@@ -199,57 +210,74 @@ export class Renderer {
       ctx.restore();
     }
 
-    ctx.rotate(p.dir);
+    const bodyImg = sprites.ready
+      ? sprites.images[t.faction === 'dawn' ? 'tankDawn' : 'tankDusk']
+      : undefined;
+    const barrelImg = sprites.ready
+      ? sprites.images[t.faction === 'dawn' ? 'barrelDawn' : 'barrelDusk']
+      : undefined;
 
-    // treads with rolling tick marks
-    const treadPhase = ((now / 1000) * t.speed * this.scale) % 6;
-    for (const side of [-1, 1] as const) {
-      ctx.fillStyle = '#15171c';
-      ctx.fillRect(-r * 1.05, side * r * 0.52 - r * 0.26, r * 2.1, r * 0.52);
-      ctx.fillStyle = '#2e323a';
-      for (let i = -3; i <= 3; i++) {
-        ctx.fillRect(i * 6 - treadPhase, side * r * 0.52 - r * 0.22, 2, r * 0.44);
+    if (bodyImg && barrelImg) {
+      // Kenney sprites point north; our headings are 0 = east
+      ctx.rotate(p.dir + Math.PI / 2);
+      const k = (r * 2.55) / 38; // body sprite is 38px wide
+      ctx.drawImage(bodyImg, (-38 / 2) * k, (-36 / 2) * k, 38 * k, 36 * k);
+      // barrel (12x26) pivots at the turret; its base sits near tank center
+      ctx.drawImage(barrelImg, (-12 / 2) * k, -24 * k, 12 * k, 26 * k);
+      ctx.restore();
+    } else {
+      ctx.rotate(p.dir);
+
+      // treads with rolling tick marks
+      const treadPhase = ((now / 1000) * t.speed * this.scale) % 6;
+      for (const side of [-1, 1] as const) {
+        ctx.fillStyle = '#15171c';
+        ctx.fillRect(-r * 1.05, side * r * 0.52 - r * 0.26, r * 2.1, r * 0.52);
+        ctx.fillStyle = '#2e323a';
+        for (let i = -3; i <= 3; i++) {
+          ctx.fillRect(i * 6 - treadPhase, side * r * 0.52 - r * 0.22, 2, r * 0.44);
+        }
       }
+
+      // hull: rounded with a sloped nose
+      ctx.fillStyle = dark;
+      hullPath(ctx, r * 1.02);
+      ctx.fill();
+      ctx.fillStyle = body;
+      hullPath(ctx, r * 0.88);
+      ctx.fill();
+      // nose chevron
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.beginPath();
+      ctx.moveTo(r * 0.55, -r * 0.3);
+      ctx.lineTo(r * 0.82, 0);
+      ctx.lineTo(r * 0.55, r * 0.3);
+      ctx.closePath();
+      ctx.fill();
+
+      // barrel
+      ctx.fillStyle = '#1a1d23';
+      ctx.fillRect(0, -r * 0.09, r * 1.55, r * 0.18);
+      ctx.fillStyle = '#3a3f48';
+      ctx.fillRect(r * 1.28, -r * 0.13, r * 0.27, r * 0.26);
+
+      // turret
+      ctx.fillStyle = '#15171c';
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = dark;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      // hatch
+      ctx.fillStyle = body;
+      ctx.beginPath();
+      ctx.arc(-r * 0.08, 0, r * 0.16, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
     }
-
-    // hull: rounded with a sloped nose
-    ctx.fillStyle = dark;
-    hullPath(ctx, r * 1.02);
-    ctx.fill();
-    ctx.fillStyle = body;
-    hullPath(ctx, r * 0.88);
-    ctx.fill();
-    // nose chevron
-    ctx.fillStyle = 'rgba(255,255,255,0.18)';
-    ctx.beginPath();
-    ctx.moveTo(r * 0.55, -r * 0.3);
-    ctx.lineTo(r * 0.82, 0);
-    ctx.lineTo(r * 0.55, r * 0.3);
-    ctx.closePath();
-    ctx.fill();
-
-    // barrel
-    ctx.fillStyle = '#1a1d23';
-    ctx.fillRect(0, -r * 0.09, r * 1.55, r * 0.18);
-    ctx.fillStyle = '#3a3f48';
-    ctx.fillRect(r * 1.28, -r * 0.13, r * 0.27, r * 0.26);
-
-    // turret
-    ctx.fillStyle = '#15171c';
-    ctx.beginPath();
-    ctx.arc(0, 0, r * 0.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = dark;
-    ctx.beginPath();
-    ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
-    ctx.fill();
-    // hatch
-    ctx.fillStyle = body;
-    ctx.beginPath();
-    ctx.arc(-r * 0.08, 0, r * 0.16, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
 
     // carried pillbox indicator
     if (isMe && state.me()?.carriedPill != null) {
@@ -476,6 +504,21 @@ export class Renderer {
   private drawBoom(px: number, py: number, t: number, kind: 'shell' | 'mine', seed: number): void {
     const ctx = this.ctx;
     const max = kind === 'mine' ? 30 : 16;
+
+    if (sprites.ready) {
+      const frame = Math.min(BOOM_FRAMES - 1, Math.floor(t * BOOM_FRAMES));
+      const img = sprites.images[`${kind === 'mine' ? 'boomMine' : 'boomShell'}${frame}` as SpriteKey];
+      if (img) {
+        const size = (kind === 'mine' ? 2.6 : 1.6) * this.scale;
+        ctx.save();
+        ctx.globalAlpha = t > 0.75 ? (1 - t) / 0.25 : 1;
+        ctx.translate(px, py);
+        ctx.rotate((seed % 7) * 0.9); // varied orientation per explosion
+        ctx.drawImage(img, -size / 2, -size / 2, size, size);
+        ctx.restore();
+        return;
+      }
+    }
     // flash core
     if (t < 0.35) {
       ctx.fillStyle = `rgba(255,236,180,${0.8 * (1 - t / 0.35)})`;

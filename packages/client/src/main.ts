@@ -12,6 +12,7 @@ import {
 import { Net } from './net';
 import { Renderer } from './render';
 import { startSpectator } from './spectator';
+import { loadSprites } from './sprites';
 import { GameState } from './state';
 import { isTouchDevice, TouchControls } from './touch';
 
@@ -35,6 +36,8 @@ async function startPlayer(): Promise<void> {
   const state = new GameState();
   const renderer = new Renderer(canvas);
   const hud = new Hud(root);
+  // art loads in parallel with the connection; tile caches repaint on arrival
+  void loadSprites().then(() => state.mapVersion++).catch((err) => console.warn('sprites failed to load', err));
   const touch = isTouchDevice();
   if (touch) document.body.classList.add('touch-mode');
 

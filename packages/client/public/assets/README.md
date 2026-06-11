@@ -4,8 +4,16 @@ Curated sprites for BOLO, sourced from the **Kenney Game Assets All-in-1** colle
 Lives under `public/` so files keep stable URLs — load in the canvas renderer via
 `new Image(); img.src = '/assets/tanks/tankBody_blue.png'` (no bundler import needed).
 
-The renderer is still 100% procedural (see `src/render.ts`, `src/tiles.ts`); nothing here is
-wired up yet. This is the candidate library to draw from when sprite-ifying.
+Wiring status (`src/sprites.ts` is the manifest/loader; painters fall back to procedural
+drawing until sprites load, and permanently for anything not listed):
+
+- **Wired**: grass, the full road connection set, forest trees, tank bodies+barrels
+  (dawn→sand, dusk→blue), bullets, shell/mine explosion frame sequences, joystick pad skin.
+- **Deliberately procedural**: water/sea (our navy palette fits BOLO better than Map Pack's
+  icy blue), buildings/walls, pillboxes and base pads (they encode owner + hp state),
+  the builder ("little green man"), mine markers, minimap blips.
+- **Unused for now**: Map Pack atlas (style too pastel next to Topdown Tanks), UI Pack
+  chrome, crosshairs.
 
 ## License
 
