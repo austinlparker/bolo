@@ -127,7 +127,7 @@ export function startSpectator(root: HTMLElement): void {
           <div class="dusk" style="width:${duskPct}%"></div>
         </div>
         <div>${latest ? `${latest.online.players} tank(s) crewed · ${latest.online.spectators} watching` : ''}</div>
-        ${histHtml ? `<div style="margin-top:8px;color:var(--dim)">${histHtml}</div>` : ''}
+        ${histHtml ? `<div class="history">${histHtml}</div>` : ''}
         <a class="button-link" href="/">→ ENLIST</a>
       `;
     }

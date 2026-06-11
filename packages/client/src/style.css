@@ -6,10 +6,11 @@
 
 :root {
   --dawn: #e8a33d;
-  --dusk: #8a6de8;
+  --dusk: #9b7df0;
   --bg: #0c0e12;
-  --panel: rgba(14, 17, 23, 0.88);
+  --panel: rgba(13, 16, 22, 0.92);
   --line: #2a2f3a;
+  --line-bright: #3d4452;
   --text: #cfd6e4;
   --dim: #79829a;
 }
@@ -34,6 +35,19 @@ canvas.game {
   image-rendering: pixelated;
 }
 
+/* ---------- panels ---------- */
+.panel,
+#hud-status,
+#hud-war,
+#hud-tools,
+.spec-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.6),
+    0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
 /* ---------- login ---------- */
 .overlay {
   position: fixed;
@@ -41,71 +55,105 @@ canvas.game {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(ellipse at center, #131722 0%, #07080c 100%);
+  background: radial-gradient(ellipse at center, #141a26 0%, #07080c 100%);
   z-index: 50;
 }
 
+/* CRT scanlines over the login backdrop */
+.overlay::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.015) 0px,
+    rgba(255, 255, 255, 0.015) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
 .login-box {
-  width: 420px;
+  width: 440px;
   max-width: 92vw;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-bright);
   background: var(--panel);
-  padding: 28px;
+  padding: 30px;
+  box-shadow:
+    0 0 0 1px #000,
+    0 0 60px rgba(232, 163, 61, 0.07),
+    0 18px 50px rgba(0, 0, 0, 0.6);
 }
 
 .login-box h1 {
-  font-size: 42px;
-  letter-spacing: 12px;
+  font-size: 46px;
+  letter-spacing: 14px;
   text-align: center;
   color: var(--dawn);
-  text-shadow: 3px 3px 0 #4a3000;
+  text-shadow:
+    3px 3px 0 #4a3000,
+    0 0 24px rgba(232, 163, 61, 0.35);
 }
 
 .login-box .sub {
   text-align: center;
   color: var(--dim);
-  margin: 6px 0 22px;
+  margin: 8px 0 24px;
   font-size: 12px;
+  letter-spacing: 2px;
 }
+
+.login-box .sub .vs-dawn { color: var(--dawn); }
+.login-box .sub .vs-dusk { color: var(--dusk); }
 
 .login-box label {
   display: block;
-  font-size: 12px;
+  font-size: 11px;
+  letter-spacing: 1px;
   color: var(--dim);
   margin: 12px 0 4px;
+  text-transform: uppercase;
 }
 
 .login-box input {
   width: 100%;
-  padding: 9px 10px;
+  padding: 10px 11px;
   background: #0a0c10;
   border: 1px solid var(--line);
   color: var(--text);
   font-family: inherit;
   font-size: 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .login-box input:focus {
   outline: none;
   border-color: var(--dawn);
+  box-shadow: 0 0 0 1px rgba(232, 163, 61, 0.35), 0 0 14px rgba(232, 163, 61, 0.12);
 }
 
 .login-box button {
   width: 100%;
   margin-top: 18px;
-  padding: 11px;
-  background: var(--dawn);
-  border: none;
+  padding: 12px;
+  background: linear-gradient(180deg, #f0b252, #d8922e);
+  border: 1px solid #5a3c0c;
   color: #1a1206;
   font-family: inherit;
   font-weight: bold;
   font-size: 14px;
-  letter-spacing: 2px;
+  letter-spacing: 3px;
   cursor: pointer;
+  transition: filter 0.12s, transform 0.05s;
 }
 
 .login-box button:hover {
-  filter: brightness(1.1);
+  filter: brightness(1.12);
+}
+
+.login-box button:active {
+  transform: translateY(1px);
 }
 
 .login-box button.secondary {
@@ -113,12 +161,18 @@ canvas.game {
   border: 1px solid var(--line);
   color: var(--dim);
   margin-top: 10px;
+  letter-spacing: 1px;
+}
+
+.login-box button.secondary:hover {
+  border-color: var(--line-bright);
+  color: var(--text);
 }
 
 .login-box .error {
   color: #e86d6d;
   font-size: 12px;
-  margin-top: 10px;
+  margin-top: 12px;
   min-height: 16px;
 }
 
@@ -130,6 +184,10 @@ canvas.game {
 
 .login-box a {
   color: var(--dim);
+}
+
+.login-box a:hover {
+  color: var(--dawn);
 }
 
 .hint {
@@ -150,45 +208,100 @@ canvas.game {
 #hud-status {
   top: 10px;
   left: 10px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  padding: 8px 12px;
+  padding: 10px 12px;
   line-height: 1.7;
+  min-width: 210px;
+}
+
+#hud-status .callsign {
+  font-size: 13px;
+  margin-bottom: 6px;
+  letter-spacing: 1px;
+}
+
+#hud-status .dead {
+  color: #e85d5d;
+  font-size: 15px;
+  letter-spacing: 3px;
+  margin: 4px 0;
+}
+
+.dim {
+  color: var(--dim);
+}
+
+.meter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+}
+
+.meter-label {
+  color: var(--dim);
+  font-size: 10px;
+  width: 34px;
+  letter-spacing: 1px;
+}
+
+.meter {
+  flex: 1;
+  height: 7px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.meter-fill {
+  display: block;
+  height: 100%;
+  transition: width 0.18s ease-out;
+}
+
+.meter-num {
+  width: 22px;
+  text-align: right;
+  font-size: 10px;
 }
 
 #hud-war {
   top: 10px;
   left: 50%;
   transform: translateX(-50%);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  padding: 6px 14px;
+  padding: 7px 16px;
   text-align: center;
+  letter-spacing: 1px;
 }
 
 #hud-tools {
   bottom: 10px;
   left: 50%;
   transform: translateX(-50%);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  padding: 6px 10px;
+  padding: 6px 8px;
   pointer-events: auto;
   display: flex;
   gap: 4px;
 }
 
 #hud-tools .tool {
-  padding: 5px 9px;
+  padding: 6px 10px;
   border: 1px solid var(--line);
   color: var(--dim);
   cursor: pointer;
   user-select: none;
+  transition: border-color 0.1s, color 0.1s, background 0.1s;
+  white-space: nowrap;
+}
+
+#hud-tools .tool:hover {
+  border-color: var(--line-bright);
+  color: var(--text);
 }
 
 #hud-tools .tool.active {
   border-color: var(--dawn);
   color: var(--dawn);
+  background: rgba(232, 163, 61, 0.08);
 }
 
 #hud-feed {
@@ -221,19 +334,25 @@ canvas.game {
 
 #chat-input {
   width: 100%;
-  padding: 6px 8px;
+  padding: 7px 9px;
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-bright);
   color: var(--text);
   font-family: inherit;
   display: none;
 }
 
+#chat-input:focus {
+  outline: none;
+  border-color: var(--dawn);
+}
+
 #hud-minimap {
   bottom: 10px;
   right: 10px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-bright);
   background: #000;
+  box-shadow: 0 0 0 1px #000, 0 4px 18px rgba(0, 0, 0, 0.45);
 }
 
 .f-dawn { color: var(--dawn); }
@@ -241,19 +360,41 @@ canvas.game {
 .f-neutral { color: #9aa; }
 .f-system { color: #6b7385; font-style: italic; }
 
-/* ---------- toast / banner ---------- */
+/* ---------- banner ---------- */
 #banner {
   position: fixed;
-  top: 30%;
+  top: 28%;
   left: 50%;
   transform: translate(-50%, -50%);
   font-size: 28px;
   letter-spacing: 6px;
-  text-shadow: 2px 2px 0 #000;
+  text-shadow: 2px 2px 0 #000, 0 0 30px rgba(0, 0, 0, 0.8);
   z-index: 20;
   pointer-events: none;
   text-align: center;
-  display: none;
+  line-height: 1.6;
+  opacity: 0;
+}
+
+#banner small {
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: var(--dim);
+}
+
+#banner.show {
+  animation: banner-in 0.5s ease-out forwards;
+}
+
+@keyframes banner-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.15);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
 }
 
 /* ---------- spectator ---------- */
@@ -261,37 +402,52 @@ canvas.game {
   position: fixed;
   top: 10px;
   left: 10px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  padding: 10px 14px;
+  padding: 12px 16px;
   z-index: 10;
   font-size: 12px;
   line-height: 1.8;
-  max-width: 320px;
+  max-width: 330px;
 }
 
 .spec-panel h2 {
-  font-size: 14px;
-  letter-spacing: 4px;
+  font-size: 16px;
+  letter-spacing: 6px;
   margin-bottom: 4px;
+  color: var(--dawn);
+  text-shadow: 2px 2px 0 #4a3000;
 }
 
 .spec-panel .bar {
   display: flex;
   height: 10px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-bright);
   margin: 6px 0;
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .spec-panel .bar .dawn { background: var(--dawn); }
 .spec-panel .bar .dusk { background: var(--dusk); }
-.spec-panel .bar .neutral { background: #444; }
+.spec-panel .bar .neutral { background: #3a3f48; }
+
+.spec-panel .history {
+  margin-top: 8px;
+  color: var(--dim);
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
 
 a.button-link {
   color: var(--dawn);
   text-decoration: none;
   border: 1px solid var(--line);
-  padding: 4px 10px;
+  padding: 5px 12px;
   display: inline-block;
-  margin-top: 8px;
+  margin-top: 10px;
+  letter-spacing: 2px;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+a.button-link:hover {
+  border-color: var(--dawn);
+  background: rgba(232, 163, 61, 0.08);
 }

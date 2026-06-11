@@ -82,6 +82,8 @@ export interface TankView {
   mines?: number;
   trees?: number;
   carriedPill?: number | null;
+  /** seconds until respawn; only on YOUR tank while dead */
+  respawnIn?: number;
 }
 
 export interface BuilderView {

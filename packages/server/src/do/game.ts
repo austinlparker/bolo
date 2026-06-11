@@ -507,6 +507,9 @@ export class GameDO implements DurableObject {
         view.mines = tank.mines;
         view.trees = tank.trees;
         view.carriedPill = tank.carriedPill;
+        if (!tank.alive) {
+          view.respawnIn = Math.max(0, Math.ceil((tank.respawnTick - world.tick) / TICK_HZ));
+        }
       }
       tanks.push(view);
       const b = tank.builder;

@@ -1,25 +1,15 @@
 /**
- * Offscreen tilemap cache: the whole 256x256 map painted once at 8px/tile,
- * then patched in place as terrain-change deltas arrive.
+ * Offscreen tilemap cache: the whole 256x256 map painted once at 16px/tile,
+ * then patched in place as terrain-change deltas arrive. Painting is
+ * neighbor-aware (roads connect, coasts get foam), so a dirty tile also
+ * repaints its neighbors.
  */
 import { hash32, MAP_SIZE, Terrain } from '@bolo/shared';
 import type { GameState } from './state';
 
-export const TILE_PX = 8;
+export const TILE_PX = 16;
 
-const BASE_COLORS: Record<number, string> = {
-  [Terrain.DeepSea]: '#15233c',
-  [Terrain.River]: '#2e62a8',
-  [Terrain.Swamp]: '#4a5a33',
-  [Terrain.Crater]: '#54432f',
-  [Terrain.Road]: '#83868c',
-  [Terrain.Forest]: '#1e4726',
-  [Terrain.Rubble]: '#6b6258',
-  [Terrain.Grass]: '#3e6b35',
-  [Terrain.Building]: '#262a33',
-  [Terrain.ShotBuilding]: '#3d4350',
-  [Terrain.BoatTile]: '#2e62a8',
-};
+const T = TILE_PX;
 
 export class TileCache {
   canvas: HTMLCanvasElement;
@@ -27,8 +17,8 @@ export class TileCache {
 
   constructor() {
     this.canvas = document.createElement('canvas');
-    this.canvas.width = MAP_SIZE * TILE_PX;
-    this.canvas.height = MAP_SIZE * TILE_PX;
+    this.canvas.width = MAP_SIZE * T;
+    this.canvas.height = MAP_SIZE * T;
     this.ctx = this.canvas.getContext('2d')!;
   }
 
@@ -44,80 +34,319 @@ export class TileCache {
       return;
     }
     if (state.dirtyTiles.length) {
-      for (const [x, y] of state.dirtyTiles) this.paintTile(state, x, y);
+      const repaint = new Set<number>();
+      for (const [x, y] of state.dirtyTiles) {
+        repaint.add(y * MAP_SIZE + x);
+        // neighbors too: road connections and coastlines depend on us
+        if (x > 0) repaint.add(y * MAP_SIZE + x - 1);
+        if (x < MAP_SIZE - 1) repaint.add(y * MAP_SIZE + x + 1);
+        if (y > 0) repaint.add((y - 1) * MAP_SIZE + x);
+        if (y < MAP_SIZE - 1) repaint.add((y + 1) * MAP_SIZE + x);
+      }
+      for (const i of repaint) this.paintTile(state, i % MAP_SIZE, Math.floor(i / MAP_SIZE));
       state.dirtyTiles = [];
     }
   }
 
+  private terrainAt(state: GameState, x: number, y: number): Terrain {
+    if (x < 0 || y < 0 || x >= MAP_SIZE || y >= MAP_SIZE) return Terrain.DeepSea;
+    return state.terrain[y * MAP_SIZE + x] as Terrain;
+  }
+
   private paintTile(state: GameState, x: number, y: number): void {
-    const t = state.terrain[y * MAP_SIZE + x] as Terrain;
+    const t = this.terrainAt(state, x, y);
     const ctx = this.ctx;
-    const px = x * TILE_PX;
-    const py = y * TILE_PX;
+    const px = x * T;
+    const py = y * T;
     const h = hash32(x, y);
+    const h2 = hash32(y, x, 7);
 
-    ctx.fillStyle = BASE_COLORS[t] ?? '#f0f';
-    ctx.fillRect(px, py, TILE_PX, TILE_PX);
-
-    // cheap per-tile texture, deterministic so repaints are stable
     switch (t) {
-      case Terrain.Grass:
-        ctx.fillStyle = 'rgba(255,255,255,0.04)';
-        ctx.fillRect(px + (h % 6), py + ((h >> 3) % 6), 2, 2);
-        break;
-      case Terrain.Forest:
-        ctx.fillStyle = '#143618';
-        ctx.fillRect(px + (h % 4), py + ((h >> 2) % 4), 3, 3);
-        ctx.fillRect(px + 4 + ((h >> 4) % 3), py + 4 + ((h >> 6) % 3), 3, 3);
-        break;
       case Terrain.DeepSea:
-        ctx.fillStyle = 'rgba(255,255,255,0.05)';
-        if (h % 5 === 0) ctx.fillRect(px + (h % 6), py + ((h >> 3) % 7), 3, 1);
+        this.paintSea(state, ctx, px, py, x, y, h);
         break;
       case Terrain.River:
-        ctx.fillStyle = 'rgba(255,255,255,0.12)';
-        ctx.fillRect(px + (h % 5), py + ((h >> 3) % 7), 3, 1);
-        break;
-      case Terrain.Swamp:
-        ctx.fillStyle = '#2e62a8';
-        ctx.fillRect(px + (h % 5), py + ((h >> 3) % 5), 3, 2);
-        break;
-      case Terrain.Crater:
-        ctx.strokeStyle = '#3a2d1e';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(px + 4, py + 4, 3, 0, Math.PI * 2);
-        ctx.stroke();
-        break;
-      case Terrain.Road:
-        ctx.fillStyle = '#6f7277';
-        if ((x + y) % 2 === 0) ctx.fillRect(px + 3, py + 3, 2, 2);
-        break;
-      case Terrain.Rubble:
-        ctx.fillStyle = '#564e45';
-        ctx.fillRect(px + (h % 5), py + ((h >> 3) % 5), 2, 2);
-        ctx.fillRect(px + ((h >> 5) % 6), py + ((h >> 8) % 6), 2, 2);
-        break;
-      case Terrain.Building:
-        ctx.fillStyle = '#3a404e';
-        ctx.fillRect(px, py, TILE_PX, 1);
-        ctx.fillRect(px, py, 1, TILE_PX);
-        ctx.fillStyle = '#11141a';
-        ctx.fillRect(px + TILE_PX - 1, py, 1, TILE_PX);
-        ctx.fillRect(px, py + TILE_PX - 1, TILE_PX, 1);
-        break;
-      case Terrain.ShotBuilding:
-        ctx.fillStyle = '#262a33';
-        ctx.fillRect(px + (h % 4), py + ((h >> 2) % 4), 4, 4);
+        this.paintWater(ctx, px, py, h, false);
+        this.paintBanks(state, ctx, px, py, x, y);
         break;
       case Terrain.BoatTile:
-        ctx.fillStyle = '#8a6034';
-        ctx.beginPath();
-        ctx.ellipse(px + 4, py + 4, 3.4, 2, (h % 4) * 0.4, 0, Math.PI * 2);
-        ctx.fill();
+        this.paintWater(ctx, px, py, h, false);
+        this.paintBanks(state, ctx, px, py, x, y);
+        this.paintBoat(ctx, px, py, h);
+        break;
+      case Terrain.Grass:
+        this.paintGrass(ctx, px, py, h, h2);
+        break;
+      case Terrain.Forest:
+        this.paintGrass(ctx, px, py, h, h2);
+        this.paintTrees(ctx, px, py, h);
+        break;
+      case Terrain.Swamp:
+        this.paintSwamp(ctx, px, py, h, h2);
+        break;
+      case Terrain.Crater:
+        this.paintCrater(ctx, px, py, h);
+        break;
+      case Terrain.Road:
+        this.paintRoad(state, ctx, px, py, x, y, h);
+        break;
+      case Terrain.Rubble:
+        this.paintRubble(ctx, px, py, h, h2);
+        break;
+      case Terrain.Building:
+        this.paintBuilding(ctx, px, py, false);
+        break;
+      case Terrain.ShotBuilding:
+        this.paintBuilding(ctx, px, py, true);
         break;
       default:
-        break;
+        ctx.fillStyle = '#f0f';
+        ctx.fillRect(px, py, T, T);
+    }
+  }
+
+  private paintSea(
+    state: GameState,
+    ctx: CanvasRenderingContext2D,
+    px: number,
+    py: number,
+    x: number,
+    y: number,
+    h: number,
+  ): void {
+    ctx.fillStyle = '#16243a';
+    ctx.fillRect(px, py, T, T);
+    // depth mottling
+    ctx.fillStyle = (h & 1) === 0 ? '#13202f' : '#192941';
+    ctx.fillRect(px + (h % 8), py + ((h >> 4) % 8), 8, 8);
+    // sparse glints
+    if (h % 7 === 0) {
+      ctx.fillStyle = 'rgba(120,160,210,0.25)';
+      ctx.fillRect(px + (h % 10), py + ((h >> 3) % 12), 5, 1);
+    }
+    // foam along coastlines (any non-sea neighbor)
+    const coastN = this.terrainAt(state, x, y - 1) !== Terrain.DeepSea;
+    const coastS = this.terrainAt(state, x, y + 1) !== Terrain.DeepSea;
+    const coastW = this.terrainAt(state, x - 1, y) !== Terrain.DeepSea;
+    const coastE = this.terrainAt(state, x + 1, y) !== Terrain.DeepSea;
+    ctx.fillStyle = 'rgba(150,190,230,0.35)';
+    if (coastN) ctx.fillRect(px, py, T, 2);
+    if (coastS) ctx.fillRect(px, py + T - 2, T, 2);
+    if (coastW) ctx.fillRect(px, py, 2, T);
+    if (coastE) ctx.fillRect(px + T - 2, py, 2, T);
+  }
+
+  private paintWater(ctx: CanvasRenderingContext2D, px: number, py: number, h: number, deep: boolean): void {
+    ctx.fillStyle = deep ? '#16243a' : '#33597f';
+    ctx.fillRect(px, py, T, T);
+    ctx.fillStyle = 'rgba(255,255,255,0.07)';
+    ctx.fillRect(px, py + ((h >> 2) % T), T, 1);
+    ctx.fillStyle = 'rgba(120,170,220,0.35)';
+    ctx.fillRect(px + (h % 9), py + ((h >> 5) % 13), 5, 1);
+    ctx.fillRect(px + ((h >> 8) % 10), py + 3 + ((h >> 11) % 9), 4, 1);
+  }
+
+  /** Darker shoreline on river edges that touch land, so banks read as banks. */
+  private paintBanks(
+    state: GameState,
+    ctx: CanvasRenderingContext2D,
+    px: number,
+    py: number,
+    x: number,
+    y: number,
+  ): void {
+    const isLand = (tx: number, ty: number) => {
+      const t = this.terrainAt(state, tx, ty);
+      return t !== Terrain.DeepSea && t !== Terrain.River && t !== Terrain.BoatTile;
+    };
+    ctx.fillStyle = 'rgba(20,35,52,0.55)';
+    if (isLand(x, y - 1)) ctx.fillRect(px, py, T, 2);
+    if (isLand(x, y + 1)) ctx.fillRect(px, py + T - 2, T, 2);
+    if (isLand(x - 1, y)) ctx.fillRect(px, py, 2, T);
+    if (isLand(x + 1, y)) ctx.fillRect(px + T - 2, py, 2, T);
+  }
+
+  private paintBoat(ctx: CanvasRenderingContext2D, px: number, py: number, h: number): void {
+    const cx = px + T / 2;
+    const cy = py + T / 2;
+    const rot = ((h % 4) * Math.PI) / 8;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rot);
+    // hull
+    ctx.fillStyle = '#6e4a26';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 6.5, 3.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // deck
+    ctx.fillStyle = '#9a7644';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 4.8, 2.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // bench
+    ctx.fillStyle = '#6e4a26';
+    ctx.fillRect(-1, -2.4, 2, 4.8);
+    ctx.restore();
+  }
+
+  private paintGrass(ctx: CanvasRenderingContext2D, px: number, py: number, h: number, h2: number): void {
+    ctx.fillStyle = (h & 3) === 0 ? '#43683a' : '#47703d';
+    ctx.fillRect(px, py, T, T);
+    ctx.fillStyle = '#518147';
+    ctx.fillRect(px + (h % 12), py + ((h >> 4) % 12), 2, 2);
+    ctx.fillRect(px + ((h >> 8) % 13), py + ((h >> 12) % 13), 2, 1);
+    ctx.fillStyle = '#3a5c33';
+    ctx.fillRect(px + (h2 % 12), py + ((h2 >> 4) % 12), 2, 2);
+    ctx.fillRect(px + ((h2 >> 8) % 14), py + ((h2 >> 12) % 14), 1, 2);
+  }
+
+  private paintTrees(ctx: CanvasRenderingContext2D, px: number, py: number, h: number): void {
+    // 2-3 canopies with shadow + highlight, jittered per tile
+    const canopies = 2 + (h % 2);
+    for (let i = 0; i < canopies; i++) {
+      const hh = hash32(h, i);
+      const cx = px + 4 + (hh % 9);
+      const cy = py + 4 + ((hh >> 4) % 9);
+      const r = 4 + ((hh >> 8) % 3);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath();
+      ctx.arc(cx + 1.5, cy + 1.5, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = (hh & 1) === 0 ? '#2c5530' : '#2f5c34';
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#3d6b41';
+      ctx.beginPath();
+      ctx.arc(cx - r * 0.3, cy - r * 0.3, r * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  private paintSwamp(ctx: CanvasRenderingContext2D, px: number, py: number, h: number, h2: number): void {
+    ctx.fillStyle = '#44552f';
+    ctx.fillRect(px, py, T, T);
+    // murky pools
+    ctx.fillStyle = '#3d5c52';
+    ctx.beginPath();
+    ctx.ellipse(px + 4 + (h % 7), py + 4 + ((h >> 4) % 7), 4, 2.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(px + 5 + (h2 % 7), py + 5 + ((h2 >> 4) % 7), 3, 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // reeds
+    ctx.strokeStyle = '#5c6e3a';
+    ctx.lineWidth = 1;
+    const rx = px + 3 + (h % 10);
+    const ry = py + 4 + ((h >> 6) % 8);
+    ctx.beginPath();
+    ctx.moveTo(rx, ry + 4);
+    ctx.lineTo(rx, ry);
+    ctx.moveTo(rx + 2, ry + 4);
+    ctx.lineTo(rx + 2.5, ry + 1);
+    ctx.stroke();
+  }
+
+  private paintCrater(ctx: CanvasRenderingContext2D, px: number, py: number, h: number): void {
+    ctx.fillStyle = '#54432f';
+    ctx.fillRect(px, py, T, T);
+    const cx = px + T / 2 + ((h % 3) - 1);
+    const cy = py + T / 2 + (((h >> 2) % 3) - 1);
+    // rim highlight
+    ctx.fillStyle = '#6b563c';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 6.5, 0, Math.PI * 2);
+    ctx.fill();
+    // pit
+    ctx.fillStyle = '#3a2d1f';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 4.6, 0, Math.PI * 2);
+    ctx.fill();
+    // deepest shadow, offset
+    ctx.fillStyle = '#2a2016';
+    ctx.beginPath();
+    ctx.arc(cx + 1, cy + 1, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  private paintRoad(
+    state: GameState,
+    ctx: CanvasRenderingContext2D,
+    px: number,
+    py: number,
+    x: number,
+    y: number,
+    h: number,
+  ): void {
+    // pave on top of a grass shoulder, connecting to neighboring roads
+    this.paintGrass(ctx, px, py, h, hash32(h, 3));
+    const isRoad = (tx: number, ty: number) => {
+      const t = this.terrainAt(state, tx, ty);
+      return t === Terrain.Road || t === Terrain.Building || t === Terrain.ShotBuilding;
+    };
+    const n = isRoad(x, y - 1);
+    const s = isRoad(x, y + 1);
+    const w = isRoad(x - 1, y);
+    const e = isRoad(x + 1, y);
+    const half = T / 2;
+    const lane = 10; // road width in px
+    const off = (T - lane) / 2;
+
+    ctx.fillStyle = '#75777c';
+    // center plaza
+    ctx.fillRect(px + off, py + off, lane, lane);
+    if (n) ctx.fillRect(px + off, py, lane, half);
+    if (s) ctx.fillRect(px + off, py + half, lane, half);
+    if (w) ctx.fillRect(px, py + off, half, lane);
+    if (e) ctx.fillRect(px + half, py + off, half, lane);
+    if (!n && !s && !w && !e) ctx.fillRect(px + 2, py + 2, T - 4, T - 4);
+
+    // wear + center dashes
+    ctx.fillStyle = '#85878c';
+    ctx.fillRect(px + (h % 10) + 2, py + ((h >> 4) % 10) + 2, 3, 2);
+    ctx.fillStyle = '#9a9ca1';
+    if ((n || s) && !(w || e)) {
+      if ((y & 1) === 0) ctx.fillRect(px + half - 1, py + 3, 1, 5);
+    } else if ((w || e) && !(n || s)) {
+      if ((x & 1) === 0) ctx.fillRect(px + 3, py + half - 1, 5, 1);
+    }
+  }
+
+  private paintRubble(ctx: CanvasRenderingContext2D, px: number, py: number, h: number, h2: number): void {
+    ctx.fillStyle = '#5d564c';
+    ctx.fillRect(px, py, T, T);
+    for (let i = 0; i < 5; i++) {
+      const hh = hash32(h, h2, i);
+      ctx.fillStyle = (hh & 1) === 0 ? '#6e675c' : '#4a443c';
+      ctx.fillRect(px + (hh % 13), py + ((hh >> 4) % 13), 2 + ((hh >> 8) % 3), 2 + ((hh >> 10) % 2));
+    }
+  }
+
+  private paintBuilding(ctx: CanvasRenderingContext2D, px: number, py: number, damaged: boolean): void {
+    // beveled top-down block
+    ctx.fillStyle = '#23262e';
+    ctx.fillRect(px, py, T, T);
+    ctx.fillStyle = damaged ? '#3a3f4a' : '#454c5b';
+    ctx.fillRect(px + 1, py + 1, T - 2, T - 2);
+    ctx.fillStyle = damaged ? '#4a505c' : '#576074';
+    ctx.fillRect(px + 1, py + 1, T - 2, 2);
+    ctx.fillRect(px + 1, py + 1, 2, T - 2);
+    ctx.fillStyle = '#1a1d24';
+    ctx.fillRect(px + T - 3, py + 2, 2, T - 3);
+    ctx.fillRect(px + 2, py + T - 3, T - 3, 2);
+    if (damaged) {
+      // cracks and a bite taken out
+      ctx.strokeStyle = '#181b21';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(px + 3, py + 4);
+      ctx.lineTo(px + 8, py + 9);
+      ctx.lineTo(px + 6, py + 13);
+      ctx.moveTo(px + 12, py + 3);
+      ctx.lineTo(px + 9, py + 8);
+      ctx.stroke();
+      ctx.fillStyle = '#23262e';
+      ctx.fillRect(px + T - 7, py + 1, 6, 5);
     }
   }
 }
