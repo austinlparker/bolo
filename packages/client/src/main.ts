@@ -2,6 +2,7 @@ import './style.css';
 import { FACTION_NAMES, type ServerMsg } from '@bolo/shared';
 import { Hud } from './hud';
 import { Input } from './input';
+import { startLeaderboard } from './leaderboard';
 import {
   clearCredentials,
   credentialsFromFragment,
@@ -20,6 +21,8 @@ const root = document.getElementById('app')!;
 
 if (location.pathname.startsWith('/map')) {
   startSpectator(root);
+} else if (location.pathname.startsWith('/leaderboard')) {
+  startLeaderboard(root);
 } else {
   void startPlayer();
 }
@@ -43,6 +46,7 @@ async function startPlayer(): Promise<void> {
 
   const net = new Net(handleMsg, () => ({ t: 'hello', token: creds!.token, role: 'player' }));
   hud.onRecall = () => net.send({ t: 'builder_recall' });
+  hud.onEmote = (kind) => net.send({ t: 'emote', kind });
   const touchControls = touch ? new TouchControls(root, net) : null;
 
   function handleMsg(msg: ServerMsg): void {
@@ -65,6 +69,9 @@ async function startPlayer(): Promise<void> {
         break;
       case 'chat':
         hud.addChat(msg);
+        break;
+      case 'emoted':
+        state.emotes.set(msg.tankId, { kind: msg.kind, at: performance.now() });
         break;
       case 'war_over':
         hud.showBanner(

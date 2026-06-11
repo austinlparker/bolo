@@ -95,3 +95,9 @@ export const TOTAL_PILLS = 18;
 // so the world stays alive when nobody is online.
 export const NPC_MIN_PER_FACTION = 3;
 export const NPC_MAX_TOTAL = 12;
+
+// --- emotes ---
+export const EMOTES = ['happy', 'angry', 'sad', 'heart', 'laugh', 'alert', 'question', 'sleep'] as const;
+export type EmoteKind = (typeof EMOTES)[number];
+export const EMOTE_COOLDOWN_MS = 1500;
+export const EMOTE_SHOW_MS = 2600;

@@ -908,3 +908,233 @@ body.touch-mode #banner small {
     url('/assets/crosshair/crosshair049.png'),
     radial-gradient(circle at 35% 35%, #ff9a6a, #e04a2a);
 }
+
+/* ---------- emotes ---------- */
+#emote-toggle {
+  display: none;
+  position: fixed;
+  left: calc(50% + 34px);
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  z-index: 16;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+body.touch-mode #emote-toggle {
+  display: flex;
+}
+
+#emote-picker {
+  display: none;
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  grid-template-columns: repeat(4, 52px);
+  gap: 6px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line-bright);
+  z-index: 30;
+  pointer-events: auto;
+}
+
+#emote-picker.open {
+  display: grid;
+}
+
+.emote-option {
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.emote-option img {
+  width: 38px;
+  height: 38px;
+  image-rendering: auto;
+  pointer-events: none;
+}
+
+/* ---------- leaderboard ---------- */
+.lb-wrap {
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
+  background: radial-gradient(ellipse at top, #141a26 0%, #07080c 70%);
+}
+
+.lb-inner {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 36px 16px 60px;
+}
+
+.lb-inner h1 {
+  font-size: 40px;
+  letter-spacing: 12px;
+  text-align: center;
+  color: var(--dawn);
+  text-shadow: 3px 3px 0 #4a3000, 0 0 24px rgba(232, 163, 61, 0.3);
+}
+
+.lb-sub {
+  text-align: center;
+  color: var(--dim);
+  letter-spacing: 3px;
+  font-size: 12px;
+  margin: 6px 0 18px;
+}
+
+.lb-war {
+  text-align: center;
+  font-size: 12px;
+  margin-bottom: 22px;
+}
+
+.lb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lb-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.lb-row:nth-child(1) { border-color: #d8b25a; }
+.lb-row:nth-child(2) { border-color: #9aa3ad; }
+.lb-row:nth-child(3) { border-color: #a87444; }
+
+.lb-pos {
+  width: 26px;
+  text-align: right;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.lb-rank {
+  width: 34px;
+  height: 26px;
+  object-fit: contain;
+}
+
+.lb-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--line-bright);
+  flex-shrink: 0;
+}
+
+.lb-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a2030;
+  font-size: 15px;
+  font-weight: bold;
+}
+
+.lb-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lb-display {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lb-display a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.lb-display a:hover {
+  color: var(--dawn);
+  text-decoration: underline;
+}
+
+.lb-handle {
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lb-stat {
+  width: 64px;
+  text-align: right;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+}
+
+.lb-stat small {
+  color: var(--dim);
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+
+.lb-empty {
+  text-align: center;
+  padding: 30px;
+}
+
+.lb-history {
+  margin-top: 28px;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.9;
+}
+
+.lb-history h2 {
+  font-size: 13px;
+  letter-spacing: 4px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.lb-links {
+  margin-top: 26px;
+  text-align: center;
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.lb-foot {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+@media (max-width: 600px) {
+  .lb-row { gap: 8px; padding: 8px 10px; }
+  .lb-stat { width: 46px; font-size: 11px; }
+  .lb-stat:nth-of-type(3) { display: none; }
+  .lb-rank { width: 26px; }
+  .lb-inner h1 { font-size: 30px; letter-spacing: 8px; }
+}

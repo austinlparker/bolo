@@ -74,6 +74,7 @@ with code 4001 — don't reconnect with the same token.
 | `builder_recall` | — | abort the current trip; refunds the order's cost |
 | `respawn` | `baseId?` | request respawn at a friendly base (note: auto-respawn at a random friendly base fires 6 s after death; this mainly matters for choosing *where*) |
 | `chat` | `text` (≤240 chars) | global chat |
+| `emote` | `kind` | float an emote bubble over your tank. `kind` ∈ `happy \| angry \| sad \| heart \| laugh \| alert \| question \| sleep`. Rate-limited to one per 1.5 s; broadcast to everyone as `emoted { tankId, kind }`. |
 | `ping` | `n` | server echoes `pong` with same `n` |
 
 ### Builder orders & costs
@@ -103,7 +104,17 @@ tank 30 s later.
   Your own tank entry additionally carries `armor/shells/mines/trees/carriedPill`.
 - `spectate` (1 Hz, spectators) — every tank, all pills/bases, war info,
   terrain deltas, online counts. No mines, full visibility.
-- `chat`, `war_over`, `new_war` (a fresh `welcome` follows), `pong`, `error`.
+- `chat`, `emoted`, `war_over`, `new_war` (a fresh `welcome` follows), `pong`, `error`.
+
+## Stats & leaderboard
+
+Per-DID profiles persist across wars (kills, deaths, captures, wars fought
+and won — you're only credited for wars you actually connected to). `GET
+/api/war` returns the top 50 by rating (`kills + 3×caps`) plus war history;
+the web leaderboard at `/leaderboard` enriches rows with live atproto
+identity (avatars/display names from the public AppView, linking to
+bsky.app). With `DEV_AUTH=1`, `POST /api/dev/seed` injects test
+profiles/history for UI work.
 
 ## Terrain enum
 

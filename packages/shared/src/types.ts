@@ -110,7 +110,10 @@ export interface PlayerProfile {
   kills: number;
   deaths: number;
   caps: number;
+  /** wars this player actually fought in (connected while the war ran) */
   warsFought: number;
+  /** ...and how many of those their faction won */
+  warsWon: number;
   firstSeen: number;
   lastSeen: number;
 }

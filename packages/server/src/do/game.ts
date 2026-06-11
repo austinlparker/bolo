@@ -11,6 +11,8 @@ import {
   type Base,
   type BuilderOrderKind,
   type ClientMsg,
+  EMOTE_COOLDOWN_MS,
+  EMOTES,
   type Faction,
   FACTIONS,
   FOREST_HIDE_RANGE,
@@ -46,6 +48,7 @@ interface Session {
   /** spectators accumulate terrain deltas between their 1Hz frames */
   pendingTerrain: [number, number, number][];
   msgBudget: number;
+  lastEmoteAt: number;
 }
 
 const PERSIST_EVERY_TICKS = TICK_HZ * 30;
@@ -57,6 +60,8 @@ export class GameDO implements DurableObject {
   private world: World | null = null;
   private sessions = new Set<Session>();
   private profiles = new Map<string, PlayerProfile>();
+  /** DIDs that actually fought in the current war (for warsFought/warsWon) */
+  private fighters = new Set<string>();
   private history: WarRecord[] = [];
   private phase: 'active' | 'intermission' = 'active';
   private nextWarAt: number | null = null;
@@ -82,6 +87,8 @@ export class GameDO implements DurableObject {
     if (meta && terrain && mines) {
       this.phase = (meta.phase as 'active' | 'intermission') ?? 'active';
       this.nextWarAt = (meta.nextWarAt as number | null) ?? null;
+      this.fighters = new Set((meta.fighters as string[]) ?? []);
+      for (const prof of this.profiles.values()) prof.warsWon ??= 0;
       this.world = World.restore(meta.world as Record<string, unknown>, new Uint8Array(terrain), new Uint8Array(mines));
     } else {
       this.world = new World(1, (Date.now() ^ 0xb010b010) >>> 0);
@@ -95,6 +102,7 @@ export class GameDO implements DurableObject {
       meta: {
         phase: this.phase,
         nextWarAt: this.nextWarAt,
+        fighters: [...this.fighters],
         world: this.world.serializeMeta(),
       },
       terrain: this.world.terrain,
@@ -117,6 +125,20 @@ export class GameDO implements DurableObject {
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
 
+    // dev-only: seed profiles/history for UI work (gated again in the Worker)
+    if (url.pathname === '/seed' && request.method === 'POST' && this.env.DEV_AUTH === '1') {
+      const body = (await request.json().catch(() => ({}))) as {
+        profiles?: PlayerProfile[];
+        history?: WarRecord[];
+      };
+      for (const p of body.profiles ?? []) {
+        if (typeof p?.did === 'string') this.profiles.set(p.did, { ...p, warsWon: p.warsWon ?? 0 });
+      }
+      if (body.history) this.history.push(...body.history);
+      await this.persist();
+      return Response.json({ ok: true, profiles: this.profiles.size });
+    }
+
     if (url.pathname === '/status') {
       const world = this.world!;
       let players = 0;
@@ -125,7 +147,7 @@ export class GameDO implements DurableObject {
       const leaderboard = [...this.profiles.values()]
         .filter((p) => p.kills + p.caps > 0)
         .sort((a, b) => b.kills + b.caps * 3 - (a.kills + a.caps * 3))
-        .slice(0, 20);
+        .slice(0, 50);
       return Response.json({
         war: world.warInfo(this.phase, this.nextWarAt),
         online: { players, spectators },
@@ -151,7 +173,13 @@ export class GameDO implements DurableObject {
 
   private handleSocket(ws: WebSocket): void {
     ws.accept();
-    const session: Session = { ws, role: 'spectator', pendingTerrain: [], msgBudget: MSG_BUDGET_PER_TICK };
+    const session: Session = {
+      ws,
+      role: 'spectator',
+      pendingTerrain: [],
+      msgBudget: MSG_BUDGET_PER_TICK,
+      lastEmoteAt: 0,
+    };
     let helloed = false;
 
     ws.addEventListener('message', (ev) => {
@@ -217,6 +245,7 @@ export class GameDO implements DurableObject {
       if (this.phase === 'active') {
         const tank = world.addTank(payload.did, payload.handle, profile.faction, false);
         session.tankId = tank.id;
+        this.fighters.add(payload.did);
       }
     } else {
       session.role = 'spectator';
@@ -253,6 +282,7 @@ export class GameDO implements DurableObject {
         deaths: 0,
         caps: 0,
         warsFought: 0,
+        warsWon: 0,
         firstSeen: Date.now(),
         lastSeen: Date.now(),
       };
@@ -283,6 +313,16 @@ export class GameDO implements DurableObject {
       if (!text.trim()) return;
       const faction = session.did ? this.profiles.get(session.did)?.faction ?? 'system' : 'system';
       this.broadcastChat(session.handle ?? 'spectator', text, faction);
+      return;
+    }
+    if (msg.t === 'emote') {
+      if (session.tankId === undefined) return;
+      const kind = EMOTES.find((e) => e === msg.kind);
+      if (!kind) return;
+      const now = Date.now();
+      if (now - session.lastEmoteAt < EMOTE_COOLDOWN_MS) return;
+      session.lastEmoteAt = now;
+      this.broadcast({ t: 'emoted', tankId: session.tankId, kind });
       return;
     }
     if (session.role !== 'player' || session.tankId === undefined || this.phase !== 'active') {
@@ -403,7 +443,13 @@ export class GameDO implements DurableObject {
       durationMinutes: Math.round((Date.now() - world.startedAt) / 60000),
     };
     this.history.push(record);
-    for (const p of this.profiles.values()) p.warsFought++;
+    // credit only the people who actually fought in this war
+    for (const did of this.fighters) {
+      const p = this.profiles.get(did);
+      if (!p) continue;
+      p.warsFought++;
+      if (p.faction === winner) p.warsWon++;
+    }
     for (const tank of world.tanks.values()) if (!tank.npc) this.foldStats(tank);
     this.phase = 'intermission';
     this.nextWarAt = Date.now() + INTERMISSION_SECONDS * 1000;
@@ -424,6 +470,7 @@ export class GameDO implements DurableObject {
         const profile = this.getOrCreateProfile(session.did, session.handle);
         const tank = this.world.addTank(session.did, session.handle, profile.faction, false);
         session.tankId = tank.id;
+        this.fighters.add(session.did);
       }
     }
     balanceNpcs(this.world);

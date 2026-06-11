@@ -52,6 +52,10 @@ export class Input {
         net.send({ t: 'builder_recall' });
         return;
       }
+      if (ev.code === 'KeyE') {
+        hud.toggleEmotePicker();
+        return;
+      }
       if (ev.code === 'Space') ev.preventDefault();
       this.held.add(ev.code);
       send();

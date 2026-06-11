@@ -63,7 +63,7 @@ export function showLogin(root: HTMLElement, initialError?: string): Promise<Cre
         <button id="login-go" class="kbtn kbtn-primary">ENLIST WITH BLUESKY</button>
         <button id="login-dev" class="secondary kbtn">dev login (local only)</button>
         <div class="error" id="login-err"></div>
-        <div class="links"><a href="/map">→ watch the war map without enlisting</a></div>
+        <div class="links"><a href="/map">→ war map</a> · <a href="/leaderboard">→ leaderboard</a></div>
       </div>
     `;
     root.appendChild(overlay);

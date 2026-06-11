@@ -131,6 +131,7 @@ export function startSpectator(root: HTMLElement): void {
         <div>${latest ? `${latest.online.players} tank(s) crewed · ${latest.online.spectators} watching` : ''}</div>
         ${histHtml ? `<div class="history">${histHtml}</div>` : ''}
         <a class="button-link kbtn" href="/">→ ENLIST</a>
+        <a class="button-link kbtn" href="/leaderboard">→ VETERANS</a>
       `;
     }
   }

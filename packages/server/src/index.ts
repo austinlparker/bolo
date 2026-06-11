@@ -73,6 +73,12 @@ export default {
       return json({ token, did: verified.did, handle: verified.handle });
     }
 
+    if (url.pathname === '/api/dev/seed' && request.method === 'POST') {
+      if (env.DEV_AUTH !== '1') return json({ error: 'dev seeding disabled' }, 403);
+      const res = await world().fetch(new Request(new URL('/seed', url.origin), request));
+      return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', ...CORS } });
+    }
+
     if (url.pathname === '/api/login/dev' && request.method === 'POST') {
       if (env.DEV_AUTH !== '1') return json({ error: 'dev login disabled' }, 403);
       const body = (await request.json().catch(() => ({}))) as { handle?: string };

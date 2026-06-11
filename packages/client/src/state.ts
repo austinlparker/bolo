@@ -44,6 +44,8 @@ export class GameState {
   tick = 0;
   booms: Boom[] = [];
   feed: string[] = [];
+  /** active emote bubbles: tankId -> { kind, at } */
+  emotes = new Map<number, { kind: string; at: number }>();
   /**
    * Terrain change tracking with multiple consumers (main view + minimap
    * caches): a version bump means "repaint everything"; the log appends

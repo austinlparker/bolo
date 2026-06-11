@@ -43,6 +43,16 @@ const FILES = {
   pillMount: 'rts-scifi/structures/scifiStructure_14.png', // gunless mount -> dead pillbox husk
   builderBot: 'rts-scifi/units/scifiUnit_39.png', // worker robot with tool -> the LGM
 
+  // emote bubbles (raw, no tint)
+  emoteHappy: 'emotes/emote_faceHappy.png',
+  emoteAngry: 'emotes/emote_faceAngry.png',
+  emoteSad: 'emotes/emote_faceSad.png',
+  emoteHeart: 'emotes/emote_heart.png',
+  emoteLaugh: 'emotes/emote_laugh.png',
+  emoteAlert: 'emotes/emote_exclamation.png',
+  emoteQuestion: 'emotes/emote_question.png',
+  emoteSleep: 'emotes/emote_sleep.png',
+
   // Map Pack atlas (sliced via ATLAS below)
   atlas: 'mappack-atlas/mapPack_spritesheet.png',
 
@@ -114,6 +124,23 @@ export const sprites: { ready: boolean; images: Partial<Record<SpriteKey, Canvas
 };
 
 export const BOOM_FRAMES = 9;
+
+/** emote kind -> sprite key (kinds come from shared EMOTES) */
+export const EMOTE_SPRITES: Record<string, SpriteKey> = {
+  happy: 'emoteHappy',
+  angry: 'emoteAngry',
+  sad: 'emoteSad',
+  heart: 'emoteHeart',
+  laugh: 'emoteLaugh',
+  alert: 'emoteAlert',
+  question: 'emoteQuestion',
+  sleep: 'emoteSleep',
+};
+
+/** emote kind -> asset URL (for DOM <img> in the picker) */
+export const EMOTE_FILES: Record<string, string> = Object.fromEntries(
+  Object.entries(EMOTE_SPRITES).map(([kind, key]) => [kind, `/assets/${FILES[key as FileKey]}`]),
+);
 
 // faction tint palette (multiply targets; light so shading survives)
 const TINT = {

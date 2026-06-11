@@ -2,11 +2,14 @@
 import {
   type BuilderOrderKind,
   type ChatBroadcastMsg,
+  type EmoteKind,
+  EMOTES,
   FACTION_NAMES,
   MAP_SIZE,
   type WarInfo,
 } from '@bolo/shared';
 import { FACTION_COLORS } from './render';
+import { EMOTE_FILES } from './sprites';
 import type { GameState } from './state';
 import { TILE_PX, TileCache } from './tiles';
 
@@ -62,6 +65,8 @@ export class Hud {
         <div id="builder-tray"></div>
         <div id="builder-btn" class="kbtn kbtn-round">⚒</div>
       </div>
+      <div id="emote-picker" class="hud"></div>
+      <div id="emote-toggle" class="hud kbtn kbtn-round">🙂</div>
     `,
     );
     this.status = document.getElementById('hud-status')!;
@@ -101,6 +106,37 @@ export class Hud {
     });
 
     this.buildMobileBuilderUi();
+    this.buildEmotePicker();
+  }
+
+  // ---------- emotes ----------
+
+  onEmote: ((kind: EmoteKind) => void) | null = null;
+
+  private buildEmotePicker(): void {
+    const picker = document.getElementById('emote-picker')!;
+    for (const kind of EMOTES) {
+      const el = document.createElement('div');
+      el.className = 'emote-option kbtn';
+      el.innerHTML = `<img src="${EMOTE_FILES[kind]}" alt="${kind}" draggable="false" />`;
+      el.onclick = () => {
+        this.onEmote?.(kind);
+        picker.classList.remove('open');
+      };
+      picker.appendChild(el);
+    }
+    document.getElementById('emote-toggle')!.onclick = () => this.toggleEmotePicker();
+    // desktop trigger lives in the tool bar
+    const tool = document.createElement('div');
+    tool.className = 'tool kbtn';
+    tool.textContent = 'E 🙂';
+    tool.title = 'emote (E)';
+    tool.onclick = () => this.toggleEmotePicker();
+    this.toolsEl.appendChild(tool);
+  }
+
+  toggleEmotePicker(): void {
+    document.getElementById('emote-picker')!.classList.toggle('open');
   }
 
   // ---------- mobile builder flow ----------

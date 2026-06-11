@@ -3,7 +3,7 @@
  * The same protocol serves human clients, external bots and spectators;
  * see docs/PROTOCOL.md for the prose version.
  */
-import type { Faction, Owner } from './constants';import type { Base, BuilderOrderKind, Pillbox, Tank, WarInfo, WarRecord } from './types';
+import type { EmoteKind, Faction, Owner } from './constants';import type { Base, BuilderOrderKind, Pillbox, Tank, WarInfo, WarRecord } from './types';
 
 // ---------- client -> server ----------
 
@@ -47,6 +47,12 @@ export interface ChatMsg {
   text: string;
 }
 
+export interface EmoteMsg {
+  t: 'emote';
+  /** one of the EMOTES list */
+  kind: string;
+}
+
 export interface PingMsg {
   t: 'ping';
   n: number;
@@ -59,6 +65,7 @@ export type ClientMsg =
   | BuilderRecallMsg
   | RespawnMsg
   | ChatMsg
+  | EmoteMsg
   | PingMsg;
 
 // ---------- server -> client ----------
@@ -171,6 +178,13 @@ export interface NewWarMsg {
   war: WarInfo;
 }
 
+/** A tank emoting; clients float the bubble for EMOTE_SHOW_MS. */
+export interface EmoteBroadcastMsg {
+  t: 'emoted';
+  tankId: number;
+  kind: EmoteKind;
+}
+
 export interface PongMsg {
   t: 'pong';
   n: number;
@@ -193,6 +207,7 @@ export type ServerMsg =
   | StateMsg
   | SpectateMsg
   | ChatBroadcastMsg
+  | EmoteBroadcastMsg
   | WarOverMsg
   | NewWarMsg
   | PongMsg

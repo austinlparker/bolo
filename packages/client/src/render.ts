@@ -1,6 +1,7 @@
 /** Top-down renderer for players: terrain cache + entities + effects. */
 import {
   BASE_MAX_ARMOR_STOCK,
+  EMOTE_SHOW_MS,
   type Faction,
   hash32,
   MAP_SIZE,
@@ -9,7 +10,7 @@ import {
   TANK_RADIUS,
   TICK_MS,
 } from '@bolo/shared';
-import { BOOM_FRAMES, sprites, type SpriteKey } from './sprites';
+import { BOOM_FRAMES, EMOTE_SPRITES, sprites, type SpriteKey } from './sprites';
 import type { GameState, InterpTank } from './state';
 import { TILE_PX, TileCache } from './tiles';
 
@@ -320,6 +321,27 @@ export class Renderer {
     ctx.fillRect(px - tw / 2 - 3, py - r - 14, tw + 6, 11);
     ctx.fillStyle = isMe ? '#ffffff' : body;
     ctx.fillText(label, px, py - r - 5.5);
+
+    // emote bubble: pops in, floats, fades out
+    const emote = state.emotes.get(t.id);
+    if (emote) {
+      const age = now - emote.at;
+      if (age > EMOTE_SHOW_MS) {
+        state.emotes.delete(t.id);
+      } else {
+        const img = sprites.ready ? sprites.images[EMOTE_SPRITES[emote.kind]] : undefined;
+        if (img) {
+          const pop = Math.min(1, age / 140); // scale-in
+          const fade = age > EMOTE_SHOW_MS - 400 ? (EMOTE_SHOW_MS - age) / 400 : 1;
+          const size = this.scale * 0.95 * (0.5 + 0.5 * pop);
+          const rise = Math.min(age / 300, 1) * 6 + Math.sin(now / 400) * 1.5;
+          ctx.save();
+          ctx.globalAlpha = fade;
+          ctx.drawImage(img, px - size / 2, py - r - 22 - size - rise, size, size);
+          ctx.restore();
+        }
+      }
+    }
   }
 
   /** The little green man (Map Pack sprite). Bobs while walking, rocks while working. */
