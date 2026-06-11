@@ -48,20 +48,32 @@ export function credentialsFromFragment(): { creds?: Credentials; error?: string
   return {};
 }
 
+/** Dev login is only reachable when DEV_AUTH=1, which only happens on a local worker. */
+function devAuthAvailable(): boolean {
+  return location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+}
+
 export function showLogin(root: HTMLElement, initialError?: string): Promise<Credentials> {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.className = 'overlay';
+    const devButton = devAuthAvailable()
+      ? `<button id="login-dev" class="secondary kbtn">dev login (local only)</button>`
+      : '';
     overlay.innerHTML = `
       <div class="login-box">
         <h1>ATBOLO</h1>
         <div class="sub">the forever war · <span class="vs-dawn">DAWN</span> vs <span class="vs-dusk">DUSK</span></div>
         <label>bluesky / atproto handle</label>
-        <input id="login-handle" placeholder="you.bsky.social" autocomplete="username" />
+        <div class="typeahead">
+          <input id="login-handle" placeholder="you.bsky.social" autocomplete="off" autocapitalize="off"
+                 autocorrect="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" />
+          <ul id="login-suggest" class="typeahead-list" role="listbox" hidden></ul>
+        </div>
         <div class="hint">you'll be sent to your own PDS to sign in (OAuth) —
         this site never sees a password.</div>
         <button id="login-go" class="kbtn kbtn-primary">ENLIST WITH BLUESKY</button>
-        <button id="login-dev" class="secondary kbtn">dev login (local only)</button>
+        ${devButton}
         <div class="error" id="login-err"></div>
         <div class="links"><a href="/map">→ war map</a> · <a href="/leaderboard">→ leaderboard</a></div>
       </div>
@@ -87,11 +99,10 @@ export function showLogin(root: HTMLElement, initialError?: string): Promise<Cre
       location.href = `/oauth/login?handle=${encodeURIComponent(handle)}`;
     };
     overlay.querySelector<HTMLButtonElement>('#login-go')!.onclick = go;
-    handleEl.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') go();
-    });
 
-    overlay.querySelector<HTMLButtonElement>('#login-dev')!.onclick = async () => {
+    attachTypeahead(handleEl, overlay.querySelector<HTMLUListElement>('#login-suggest')!, go);
+
+    overlay.querySelector<HTMLButtonElement>('#login-dev')?.addEventListener('click', async () => {
       errEl.textContent = '';
       const handle = handleEl.value.trim() || `guest-${Math.floor(Math.random() * 9999)}`;
       try {
@@ -106,6 +117,158 @@ export function showLogin(root: HTMLElement, initialError?: string): Promise<Cre
       } catch (err) {
         errEl.textContent = err instanceof Error ? err.message : String(err);
       }
-    };
+    });
+  });
+}
+
+// ---------- handle typeahead ----------
+
+interface Actor {
+  did: string;
+  handle: string;
+  displayName?: string;
+  avatar?: string;
+}
+
+const TYPEAHEAD_ENDPOINT = 'https://public.api.bsky.app/xrpc/app.bsky.actor.searchActorsTypeahead';
+
+async function searchActors(query: string, signal: AbortSignal): Promise<Actor[]> {
+  const url = `${TYPEAHEAD_ENDPOINT}?q=${encodeURIComponent(query)}&limit=8`;
+  const res = await fetch(url, { signal });
+  if (!res.ok) return [];
+  const data = (await res.json()) as { actors?: Actor[] };
+  return data.actors ?? [];
+}
+
+/**
+ * Wire a debounced bluesky-handle autocomplete onto the login input. The
+ * public appview serves searchActorsTypeahead unauthenticated, so this stays
+ * a pure client-side lookup. `submit` runs when the user commits a choice.
+ */
+function attachTypeahead(input: HTMLInputElement, list: HTMLUListElement, submit: () => void): void {
+  let actors: Actor[] = [];
+  let active = -1;
+  let debounce: ReturnType<typeof setTimeout> | undefined;
+  let inflight: AbortController | undefined;
+
+  const close = () => {
+    list.hidden = true;
+    list.replaceChildren();
+    actors = [];
+    active = -1;
+    input.setAttribute('aria-expanded', 'false');
+  };
+
+  const choose = (actor: Actor) => {
+    input.value = actor.handle;
+    close();
+    submit();
+  };
+
+  const render = () => {
+    list.replaceChildren();
+    actors.forEach((actor, i) => {
+      const li = document.createElement('li');
+      li.className = 'typeahead-item' + (i === active ? ' active' : '');
+      li.setAttribute('role', 'option');
+      li.setAttribute('aria-selected', String(i === active));
+      const avatar = actor.avatar
+        ? `<img class="typeahead-avatar" src="${actor.avatar}" alt="" />`
+        : `<span class="typeahead-avatar typeahead-avatar-empty"></span>`;
+      const name = actor.displayName?.trim();
+      li.innerHTML =
+        avatar +
+        `<span class="typeahead-text">` +
+        `<span class="typeahead-handle">@${actor.handle}</span>` +
+        (name ? `<span class="typeahead-name">${escapeHtml(name)}</span>` : '') +
+        `</span>`;
+      // mousedown (not click) fires before the input's blur, so the choice lands
+      li.addEventListener('mousedown', (ev) => {
+        ev.preventDefault();
+        choose(actor);
+      });
+      list.appendChild(li);
+    });
+    list.hidden = actors.length === 0;
+    input.setAttribute('aria-expanded', String(actors.length > 0));
+  };
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim().replace(/^@/, '');
+    if (debounce) clearTimeout(debounce);
+    if (q.length < 2) {
+      inflight?.abort();
+      close();
+      return;
+    }
+    debounce = setTimeout(() => {
+      inflight?.abort();
+      inflight = new AbortController();
+      searchActors(q, inflight.signal)
+        .then((results) => {
+          actors = results;
+          active = -1;
+          render();
+        })
+        .catch(() => {
+          /* aborted or network blip — leave the current list as-is */
+        });
+    }, 180);
+  });
+
+  input.addEventListener('keydown', (ev) => {
+    const open = !list.hidden && actors.length > 0;
+    switch (ev.key) {
+      case 'ArrowDown':
+        if (open) {
+          ev.preventDefault();
+          active = (active + 1) % actors.length;
+          render();
+        }
+        break;
+      case 'ArrowUp':
+        if (open) {
+          ev.preventDefault();
+          active = (active - 1 + actors.length) % actors.length;
+          render();
+        }
+        break;
+      case 'Enter':
+        ev.preventDefault();
+        if (open && active >= 0) choose(actors[active]);
+        else {
+          close();
+          submit();
+        }
+        break;
+      case 'Escape':
+        if (open) {
+          ev.preventDefault();
+          close();
+        }
+        break;
+    }
+  });
+
+  input.addEventListener('blur', () => {
+    // defer so a mousedown on a suggestion is handled before we tear down
+    setTimeout(close, 120);
+  });
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => {
+    switch (c) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      default:
+        return '&#39;';
+    }
   });
 }

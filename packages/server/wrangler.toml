@@ -3,6 +3,12 @@ main = "src/index.ts"
 compatibility_date = "2025-05-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Persist invocation logs (exceptions + console output) so they're queryable in
+# the dashboard, not just visible during a live `wrangler tail`.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 # The whole world lives in a single Durable Object instance ("world").
 # At O(tens) of concurrent players a single DO at 10Hz is comfortable.
 [durable_objects]
