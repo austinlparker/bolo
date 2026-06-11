@@ -60,8 +60,8 @@ export function showLogin(root: HTMLElement, initialError?: string): Promise<Cre
         <input id="login-handle" placeholder="you.bsky.social" autocomplete="username" />
         <div class="hint">you'll be sent to your own PDS to sign in (OAuth) —
         this site never sees a password.</div>
-        <button id="login-go">ENLIST WITH BLUESKY</button>
-        <button id="login-dev" class="secondary">dev login (local only)</button>
+        <button id="login-go" class="kbtn kbtn-primary">ENLIST WITH BLUESKY</button>
+        <button id="login-dev" class="secondary kbtn">dev login (local only)</button>
         <div class="error" id="login-err"></div>
         <div class="links"><a href="/map">→ watch the war map without enlisting</a></div>
       </div>

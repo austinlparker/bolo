@@ -53,14 +53,14 @@ export class Hud {
         <div id="chat-log"></div>
         <input id="chat-input" maxlength="240" placeholder="say something... (enter)" />
       </div>
-      <div id="chat-toggle" class="hud">💬</div>
+      <div id="chat-toggle" class="hud kbtn kbtn-round">💬</div>
       <canvas id="hud-minimap" class="hud" width="180" height="180"></canvas>
       <div id="banner"></div>
       <div id="toast"></div>
       <div id="death-overlay">⊘ DESTROYED<small></small></div>
       <div id="builder-ui" class="hud">
         <div id="builder-tray"></div>
-        <div id="builder-btn">⚒</div>
+        <div id="builder-btn" class="kbtn kbtn-round">⚒</div>
       </div>
     `,
     );
@@ -75,7 +75,7 @@ export class Hud {
 
     for (const t of TOOLS) {
       const el = document.createElement('div');
-      el.className = 'tool';
+      el.className = 'tool kbtn';
       el.dataset.kind = t.kind;
       el.textContent = t.label;
       el.title = t.tip;
@@ -83,7 +83,7 @@ export class Hud {
       this.toolsEl.appendChild(el);
     }
     const recall = document.createElement('div');
-    recall.className = 'tool';
+    recall.className = 'tool kbtn';
     recall.textContent = 'R ↩ recall';
     recall.title = 'recall the builder (refunds the order)';
     recall.onclick = () => this.onRecall?.();
@@ -118,7 +118,7 @@ export class Hud {
 
     for (const t of TOOLS) {
       const el = document.createElement('div');
-      el.className = 'tray-tool';
+      el.className = 'tray-tool kbtn';
       el.innerHTML = `${t.label.slice(2)}`;
       el.onclick = () => {
         this.armedTool = t.kind;
@@ -131,7 +131,7 @@ export class Hud {
       tray.appendChild(el);
     }
     const recall = document.createElement('div');
-    recall.className = 'tray-tool';
+    recall.className = 'tray-tool kbtn';
     recall.textContent = '↩ recall';
     recall.onclick = () => {
       this.onRecall?.();

@@ -37,6 +37,7 @@ const FILES = {
   tankBase: 'tanks/tankBody_sand_outline.png',
   barrelBase: 'tanks/tankSand_barrel1_outline.png',
   bulletBase: 'projectiles/bulletSand1.png',
+  crosshairBase: 'crosshair/crosshair029.png',
 
   // Map Pack atlas (sliced via ATLAS below)
   atlas: 'mappack-atlas/mapPack_spritesheet.png',
@@ -100,7 +101,9 @@ type DerivedKey =
   | 'barrelDusk'
   | 'bulletDawn'
   | 'bulletDusk'
-  | 'bulletNeutral';
+  | 'bulletNeutral'
+  | 'crosshairDawn'
+  | 'crosshairDusk';
 
 export type SpriteKey = FileKey | AtlasKey | DerivedKey;
 
@@ -222,6 +225,10 @@ export async function loadSprites(
   img.bulletDawn = tinted(img.bulletBase, null, { multiply: TINT.dawnLight });
   img.bulletDusk = tinted(img.bulletBase, null, { multiply: TINT.duskLight });
   img.bulletNeutral = tinted(img.bulletBase, null, { multiply: TINT.neutralLight });
+
+  // gun-range cursor (the crosshair pack art is white; multiply colors it)
+  img.crosshairDawn = tinted(img.crosshairBase, null, { multiply: '#f5b04a' });
+  img.crosshairDusk = tinted(img.crosshairBase, null, { multiply: '#a98ef5' });
 
   sprites.ready = true;
 }

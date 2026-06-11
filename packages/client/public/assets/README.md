@@ -16,7 +16,10 @@ drawing until sprites load, and permanently for anything not listed):
   explosion frame sequences; joystick pad skins.
 - **Still procedural**: mine markers, hp/stock bars, anger auras, shadows, coast foam and
   river banks, boat hulls, minimap blips - state overlays, not art.
-- **Unused for now**: UI Pack chrome, crosshairs.
+- **UI chrome**: buttons across login/HUD/tray/spectator are 9-sliced UI Pack sprites
+  (`.kbtn` in style.css) recolored with CSS filters — dark slate for normal chrome, the
+  blue gradient hue-rotated to amber for primary actions. Crosshair 029 (faction-tinted)
+  is the in-world gun-range cursor; crosshair 049 dials the aim stick.
 
 ## License
 

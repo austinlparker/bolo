@@ -845,3 +845,66 @@ body.touch-mode #banner small {
 .login-box input {
   font-size: 16px;
 }
+
+/* ---------- Kenney UI chrome ----------
+   Buttons get a 9-sliced sprite layer on ::before; CSS filters recolor the
+   pack art (dark slate for normal chrome, hue-rotated blue->amber for the
+   primary action) without touching the text above it. */
+.kbtn {
+  position: relative;
+  isolation: isolate;
+  background: transparent !important;
+  border: none !important;
+}
+
+.kbtn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border: 9px solid transparent;
+  border-image: url('/assets/ui/grey/button_rectangle_depth_flat.png') 12 fill / 9px stretch;
+  filter: brightness(0.38) saturate(0.4);
+  transition: filter 0.12s;
+}
+
+.kbtn:hover::before {
+  filter: brightness(0.55) saturate(0.4);
+}
+
+.kbtn.active::before,
+.kbtn:active::before {
+  filter: sepia(1) saturate(2.6) hue-rotate(-12deg) brightness(0.55);
+}
+
+.kbtn-primary::before {
+  border-image-source: url('/assets/ui/blue/button_rectangle_depth_gradient.png');
+  filter: hue-rotate(202deg) saturate(1.25) brightness(1);
+}
+
+.kbtn-primary:hover::before {
+  filter: hue-rotate(202deg) saturate(1.35) brightness(1.12);
+}
+
+.kbtn-round::before {
+  border-image-source: url('/assets/ui/grey/button_round_depth_flat.png');
+  border-width: 14px;
+  border-image-slice: 24 fill;
+  border-image-width: 14px;
+}
+
+/* aim stick wears the crosshair dial */
+.stick-knob.aim {
+  background-image:
+    url('/assets/crosshair/crosshair049.png'),
+    radial-gradient(circle at 35% 35%, #e87575, #a83232);
+  background-size: 72% 72%, cover;
+  background-position: center, center;
+  background-repeat: no-repeat;
+}
+
+.stick-knob.aim.hot {
+  background-image:
+    url('/assets/crosshair/crosshair049.png'),
+    radial-gradient(circle at 35% 35%, #ff9a6a, #e04a2a);
+}

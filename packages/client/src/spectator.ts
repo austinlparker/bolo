@@ -130,7 +130,7 @@ export function startSpectator(root: HTMLElement): void {
         </div>
         <div>${latest ? `${latest.online.players} tank(s) crewed · ${latest.online.spectators} watching` : ''}</div>
         ${histHtml ? `<div class="history">${histHtml}</div>` : ''}
-        <a class="button-link" href="/">→ ENLIST</a>
+        <a class="button-link kbtn" href="/">→ ENLIST</a>
       `;
     }
   }

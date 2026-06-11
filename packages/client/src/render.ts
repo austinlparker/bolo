@@ -5,6 +5,7 @@ import {
   hash32,
   MAP_SIZE,
   PILL_MAX_HP,
+  SHELL_RANGE,
   TANK_RADIUS,
   TICK_MS,
 } from '@bolo/shared';
@@ -152,6 +153,21 @@ export class Renderer {
         ctx.beginPath();
         ctx.arc(px, py, 2.4, 0, Math.PI * 2);
         ctx.fill();
+      }
+    }
+
+    // gun-range cursor: Bolo's targeting cursor — where your shells land,
+    // at max range along the hull axis
+    if (meInterp && meInterp.cur.alive && sprites.ready) {
+      const p = state.lerpTank(meInterp, now, TICK_MS);
+      const cross = sprites.images[meInterp.cur.faction === 'dawn' ? 'crosshairDawn' : 'crosshairDusk'];
+      if (cross) {
+        const [cxs, cys] = toScreen(p.x + Math.cos(p.dir) * SHELL_RANGE, p.y + Math.sin(p.dir) * SHELL_RANGE);
+        const cs = this.scale * 0.85;
+        ctx.save();
+        ctx.globalAlpha = 0.75;
+        ctx.drawImage(cross, cxs - cs / 2, cys - cs / 2, cs, cs);
+        ctx.restore();
       }
     }
 

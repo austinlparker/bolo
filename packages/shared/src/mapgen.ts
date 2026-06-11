@@ -47,37 +47,40 @@ export function generateMap(seed: number): GeneratedMap {
   const riverSeed = hash32(seed, 3);
   const swampSeed = hash32(seed, 4);
 
+  // Symmetric noise: average each field with its own 180°-rotated sample.
+  // Symmetric by construction (and bit-exact: addition commutes), and smooth
+  // everywhere — naively copying one half onto the other put two uncorrelated
+  // noise fields edge to edge and left a visible seam along the equator.
+  // Averaging halves the variance, so re-stretch around the mean.
+  const sym = (s: number, freq: number, x: number, y: number, octaves: number): number => {
+    const a = fbm2(s, (x / W) * freq, (y / W) * freq, octaves);
+    const b = fbm2(s, ((W - 1 - x) / W) * freq, ((W - 1 - y) / W) * freq, octaves);
+    return 0.5 + ((a + b) / 2 - 0.5) * 1.41;
+  };
+
   // --- terrain from noise, island falloff towards the edges ---
   const c = (W - 1) / 2;
   for (let y = 0; y < W; y++) {
     for (let x = 0; x < W; x++) {
-      const nx = x / W;
-      const ny = y / W;
       const dx = (x - c) / c;
       const dy = (y - c) / c;
       const r = Math.sqrt(dx * dx + dy * dy);
       const falloff = Math.max(0, r - 0.55) * 1.8;
-      const elev = fbm2(elevSeed, nx * 6, ny * 6, 5) - falloff;
+      const elev = sym(elevSeed, 6, x, y, 5) - falloff;
 
       let t: Terrain;
       if (elev < 0.32) t = Terrain.DeepSea;
       else if (elev < 0.38) t = Terrain.River; // shallow coastal water
-      else if (elev < 0.42 && fbm2(swampSeed, nx * 10, ny * 10, 3) > 0.5) t = Terrain.Swamp;
+      else if (elev < 0.42 && sym(swampSeed, 10, x, y, 3) > 0.5) t = Terrain.Swamp;
       else {
         // winding rivers along noise ridge lines, only on land
-        const rn = fbm2(riverSeed, nx * 5, ny * 5, 4);
+        const rn = sym(riverSeed, 5, x, y, 4);
         if (Math.abs(rn - 0.5) < 0.012) t = Terrain.River;
-        else if (fbm2(forestSeed, nx * 9, ny * 9, 4) > 0.58) t = Terrain.Forest;
+        else if (sym(forestSeed, 9, x, y, 4) > 0.58) t = Terrain.Forest;
         else t = Terrain.Grass;
       }
       terrain[idx(x, y)] = t;
     }
-  }
-
-  // enforce 180° symmetry: second half of the array mirrors the first
-  const half = Math.floor((W * W) / 2);
-  for (let i = 0; i < half; i++) {
-    terrain[W * W - 1 - i] = terrain[i];
   }
 
   // --- base sites: pick well-spaced land tiles in the canonical half, mirror them ---
