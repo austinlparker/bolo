@@ -48,7 +48,7 @@ async function startPlayer(): Promise<void> {
         state.applyWelcome(msg);
         if (msg.you) {
           const controls = touch
-            ? 'stick to drive · hold ⊕ to fire · ⚒ opens build tools'
+            ? 'left stick drives · right stick turns the tank & fires · ⚒ builds'
             : 'WASD drive · space fire · 1-6 builder tools · click to send builder · R recall · enter chat';
           hud.showBanner(
             `<span class="f-${msg.you.faction}">you fight for ${FACTION_NAMES[msg.you.faction]}</span><br/>` +

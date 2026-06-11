@@ -470,9 +470,8 @@ body.touch-mode #touch-ui {
   display: block;
 }
 
-#joy-zone {
+.stick-zone {
   position: fixed;
-  left: 0;
   bottom: 0;
   width: 200px;
   height: 200px;
@@ -480,9 +479,16 @@ body.touch-mode #touch-ui {
   touch-action: none;
 }
 
-#joy-base {
+#joy-zone {
+  left: 0;
+}
+
+#aim-zone {
+  right: 0;
+}
+
+.stick-base {
   position: absolute;
-  left: 22px;
   bottom: calc(22px + env(safe-area-inset-bottom, 0px));
   width: 124px;
   height: 124px;
@@ -492,7 +498,16 @@ body.touch-mode #touch-ui {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
 }
 
-#joy-knob {
+#joy-base {
+  left: 22px;
+}
+
+#aim-base {
+  right: 22px;
+  border-color: #7a3434;
+}
+
+.stick-knob {
   position: absolute;
   left: 50%;
   top: 50%;
@@ -505,36 +520,14 @@ body.touch-mode #touch-ui {
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5);
 }
 
-#fire-btn {
-  position: fixed;
-  right: 20px;
-  bottom: calc(26px + env(safe-area-inset-bottom, 0px));
-  width: 94px;
-  height: 94px;
-  border-radius: 50%;
-  border: 2px solid #7a3434;
-  background: rgba(150, 48, 48, 0.4);
-  color: #ffb9b9;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: 26px;
-  line-height: 1;
-  z-index: 15;
-  touch-action: none;
-  cursor: pointer;
+.stick-knob.aim {
+  background: radial-gradient(circle at 35% 35%, #e87575, #a83232);
+  border-color: #5a1414;
 }
 
-#fire-btn span {
-  font-size: 10px;
-  letter-spacing: 3px;
-  margin-top: 2px;
-}
-
-#fire-btn.held {
-  background: rgba(225, 70, 70, 0.65);
-  border-color: #c45050;
+.stick-knob.aim.hot {
+  background: radial-gradient(circle at 35% 35%, #ff9a6a, #e04a2a);
+  box-shadow: 0 0 16px rgba(255, 110, 60, 0.7);
 }
 
 /* chat hides behind a small bottom-center toggle on touch devices */
@@ -600,8 +593,8 @@ body.touch-mode #builder-ui {
 
 #builder-btn {
   position: fixed;
-  right: 128px;
-  bottom: calc(34px + env(safe-area-inset-bottom, 0px));
+  right: 30px;
+  bottom: calc(172px + env(safe-area-inset-bottom, 0px));
   width: 62px;
   height: 62px;
   border-radius: 50%;
@@ -636,7 +629,7 @@ body.touch-mode #builder-ui {
 #builder-tray {
   display: none;
   position: fixed;
-  right: 14px;
+  right: 102px;
   bottom: calc(112px + env(safe-area-inset-bottom, 0px));
   grid-template-columns: repeat(2, auto);
   gap: 6px;

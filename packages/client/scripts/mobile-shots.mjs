@@ -26,8 +26,9 @@ await page.tap('#login-dev');
 await page.waitForTimeout(8000); // let the welcome banner clear
 await page.screenshot({ path: '/tmp/m2-game.png' });
 
-// joystick drive
+// twin-stick: drive with left, fire with right
 const joy = await page.locator('#joy-base').boundingBox();
+  const aim = await page.locator('#aim-base').boundingBox();
 if (joy) {
   const cx = joy.x + joy.width / 2, cy = joy.y + joy.height / 2;
   await page.mouse.move(cx, cy);
