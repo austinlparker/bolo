@@ -20,7 +20,7 @@ import { isTouchDevice, TouchControls } from './touch';
 const root = document.getElementById('app')!;
 
 if (location.pathname.startsWith('/map')) {
-  startSpectator(root);
+  void startSpectator(root);
 } else if (location.pathname.startsWith('/leaderboard')) {
   startLeaderboard(root);
 } else {
@@ -39,8 +39,13 @@ async function startPlayer(): Promise<void> {
   const state = new GameState();
   const renderer = new Renderer(canvas);
   const hud = new Hud(root);
-  // art loads in parallel with the connection; tile caches repaint on arrival
-  void loadSprites().then(() => state.mapVersion++).catch((err) => console.warn('sprites failed to load', err));
+  // art loads BEFORE the first frame: painting fallback art and swapping to
+  // the (brighter) sprites mid-session reads as a startup flash
+  try {
+    await loadSprites();
+  } catch (err) {
+    console.warn('sprites failed to load, using fallback art', err);
+  }
   const touch = isTouchDevice();
   if (touch) document.body.classList.add('touch-mode');
 

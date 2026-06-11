@@ -15,7 +15,7 @@ import { GameState } from './state';
 import { TILE_PX, TileCache } from './tiles';
 import { warLine } from './hud';
 
-export function startSpectator(root: HTMLElement): void {
+export async function startSpectator(root: HTMLElement): Promise<void> {
   const canvas = document.createElement('canvas');
   canvas.className = 'game';
   root.appendChild(canvas);
@@ -34,7 +34,8 @@ export function startSpectator(root: HTMLElement): void {
 
   const state = new GameState();
   const tiles = new TileCache();
-  void loadSprites().then(() => state.mapVersion++).catch(() => {});
+  // art before first paint, same as the player view: no fallback->sprite flash
+  await loadSprites().catch(() => {});
   let latest: SpectateMsg | null = null;
   let history: WarRecord[] = [];
 

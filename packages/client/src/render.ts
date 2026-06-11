@@ -47,6 +47,11 @@ export class Renderer {
   private vw = 0;
   private vh = 0;
   scale = 26; // screen px per tile
+  /**
+   * Ambient color grade, multiplied over the whole frame: one knob that sits
+   * the bright Kenney art in BOLO's moodier dusk palette. White = off.
+   */
+  ambient = '#aab3c8';
   camX = MAP_SIZE / 2;
   camY = MAP_SIZE / 2;
 
@@ -188,6 +193,12 @@ export class Renderer {
       if (!onScreen(px, py)) continue;
       this.drawBoom(px, py, t, b.kind, hash32(Math.round(b.x * 7), Math.round(b.y * 7)));
     }
+
+    // ambient grade before fog, so fog stays near-black on top of it
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = this.ambient;
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'source-over';
 
     if (meInterp) {
       // fog of war: vision fades out and dies just inside the server's entity
