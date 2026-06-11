@@ -7,7 +7,7 @@
     "typecheck": "pnpm -r typecheck",
     "dev": "pnpm --parallel -r dev",
     "build": "pnpm -r build",
-    "deploy": "pnpm --filter @bolo/client build && pnpm --filter @bolo/server deploy"
+    "deploy": "pnpm --filter @bolo/client build && pnpm --filter @bolo/server run deploy"
   },
   "packageManager": "pnpm@10.33.0",
   "devDependencies": {

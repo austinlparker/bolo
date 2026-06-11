@@ -80,8 +80,11 @@ openssl rand -hex 32 | pnpm --filter @bolo/server exec wrangler secret put SESSI
 Then, every deploy:
 
 ```sh
-pnpm deploy    # builds the client, deploys worker + assets + Durable Object
+pnpm run deploy    # builds the client, deploys worker + assets + Durable Object
 ```
+
+(`run` is required: bare `pnpm deploy` invokes pnpm 10's built-in workspace
+deploy command, not this script.)
 
 That's the whole game — static client, API, WebSockets, simulation, storage —
 in a single `wrangler deploy`. World state persists in the Durable Object's
