@@ -151,7 +151,7 @@ async function main(): Promise<void> {
   };
 
   ws.onopen = () => {
-    ws.send(JSON.stringify({ t: 'hello', token, role: 'player' } satisfies ClientMsg));
+    ws.send(JSON.stringify({ t: 'hello', token, role: 'player', client: 'bot' } satisfies ClientMsg));
     console.log('connected to', wsUrl);
   };
 

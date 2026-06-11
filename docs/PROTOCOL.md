@@ -56,9 +56,12 @@ POST /api/login/dev     { "handle": "ferris" }
 Open the WebSocket and send `hello` as your first frame:
 
 ```json
-{ "t": "hello", "token": "<session token>", "role": "player" }
+{ "t": "hello", "token": "<session token>", "role": "player", "client": "bot" }
 { "t": "hello", "role": "spectator" }
 ```
+
+`client` (optional: `keyboard | touch | bot`) declares what's driving the
+tank; it only segments balance telemetry and has no gameplay effect.
 
 Players receive `welcome`, then `state` at 10 Hz. Spectators receive
 `welcome` (with `you: null`), then `spectate` at 1 Hz. One connection per
@@ -69,7 +72,7 @@ with code 4001 — don't reconnect with the same token.
 
 | message | fields | notes |
 |---|---|---|
-| `input` | `accel`, `turn` ∈ [-1, 1], `fire: bool` | held controls, Bolo-style: applies every tick until replaced. Fractional `turn` enables fine aiming. Positive turn is clockwise (screen space, y-down). Send only on change. |
+| `input` | `accel`, `turn` ∈ [-1, 1], `fire: bool`, `nudge?: number` | held controls, Bolo-style: applies every tick until replaced. Fractional `turn` enables fine aiming. Positive turn is clockwise (screen space, y-down). Send only on change. `nudge` is a discrete extra rotation in radians (clamped to ±0.35/message), queued server-side and drained at the standard turn rate — lossless fine aiming for tap-style inputs, can't out-turn a held key. |
 | `builder` | `order`, `x`, `y` (tile coords) | dispatch the engineer. `order` ∈ `harvest \| road \| wall \| boat \| pillbox \| mine`. Max range 12 tiles from tank. Costs trees/mines (see below); invalid orders return an `error` frame with the reason. |
 | `builder_recall` | — | abort the current trip; refunds the order's cost |
 | `respawn` | `baseId?` | request respawn at a friendly base (note: auto-respawn at a random friendly base fires 6 s after death; this mainly matters for choosing *where*) |

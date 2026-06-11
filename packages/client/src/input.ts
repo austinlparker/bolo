@@ -5,20 +5,36 @@ import { TOOLS } from './hud';
 import type { Net } from './net';
 import type { Renderer } from './render';
 
+/** One fine-aim tap turns this many radians (~2.9°); see InputMsg.nudge. */
+const FINE_NUDGE = 0.05;
+/** A turn key held longer than this becomes continuous full-rate turning. */
+const HOLD_MS = 170;
+
+const TURN_KEYS: Record<string, -1 | 1> = { KeyA: -1, ArrowLeft: -1, KeyD: 1, ArrowRight: 1 };
+
 export class Input {
   private held = new Set<string>();
+  private heldSince = new Map<string, number>();
   private last: InputMsg = { t: 'input', accel: 0, turn: 0, fire: false };
 
   constructor(net: Net, renderer: Renderer, hud: Hud) {
-    const send = () => {
+    // a quick tap on a turn key is a precise nudge; only a real hold engages
+    // continuous turning (otherwise one 10Hz server tick of full-rate turn
+    // — 18° — is the smallest possible aim adjustment)
+    const heldPast = (code: string) =>
+      this.held.has(code) && performance.now() - (this.heldSince.get(code) ?? 0) >= HOLD_MS;
+
+    const send = (nudge?: number) => {
       const accel = this.held.has('KeyW') || this.held.has('ArrowUp') ? 1 : this.held.has('KeyS') || this.held.has('ArrowDown') ? -1 : 0;
-      const left = this.held.has('KeyA') || this.held.has('ArrowLeft');
-      const right = this.held.has('KeyD') || this.held.has('ArrowRight');
+      const left = heldPast('KeyA') || heldPast('ArrowLeft');
+      const right = heldPast('KeyD') || heldPast('ArrowRight');
       const turn = left && !right ? -1 : right && !left ? 1 : 0;
       const fire = this.held.has('Space');
       const msg: InputMsg = { t: 'input', accel, turn, fire };
-      if (msg.accel !== this.last.accel || msg.turn !== this.last.turn || msg.fire !== this.last.fire) {
+      const changed = msg.accel !== this.last.accel || msg.turn !== this.last.turn || msg.fire !== this.last.fire;
+      if (changed || nudge !== undefined) {
         this.last = msg;
+        if (nudge !== undefined) msg.nudge = nudge;
         net.send(msg);
       }
     };
@@ -57,17 +73,27 @@ export class Input {
         return;
       }
       if (ev.code === 'Space') ev.preventDefault();
+      const dir = TURN_KEYS[ev.code];
+      if (dir && !ev.repeat) {
+        this.held.add(ev.code);
+        this.heldSince.set(ev.code, performance.now());
+        send(dir * FINE_NUDGE); // instant fine tap...
+        setTimeout(send, HOLD_MS + 10); // ...then full turn if still held
+        return;
+      }
       this.held.add(ev.code);
       send();
     });
 
     addEventListener('keyup', (ev) => {
       this.held.delete(ev.code);
+      this.heldSince.delete(ev.code);
       send();
     });
 
     addEventListener('blur', () => {
       this.held.clear();
+      this.heldSince.clear();
       send();
     });
 

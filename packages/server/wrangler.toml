@@ -31,6 +31,10 @@ run_worker_first = ["/oauth/*", "/api/*", "/ws"]
 [vars]
 # Set to "1" to allow /api/login/dev (no atproto round-trip) for local play.
 DEV_AUTH = "0"
+# Honeycomb dataset for balance telemetry (shot outcomes, kills/TTK).
+HONEYCOMB_DATASET = "atbolo-sim"
 
 # Secrets (set with `wrangler secret put`):
 #   SESSION_SECRET - HMAC key for session tokens. Required in production.
+#   HONEYCOMB_API_KEY - ingest key for balance telemetry. Optional; telemetry
+#                       is a no-op without it.

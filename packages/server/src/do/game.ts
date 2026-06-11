@@ -38,6 +38,7 @@ import { verifyToken } from '../auth';
 import { type Env, sessionSecret } from '../env';
 import { balanceNpcs, npcThink } from '../sim/npc';
 import { World } from '../sim/world';
+import { StatsSink } from '../stats';
 
 interface Session {
   ws: WebSocket;
@@ -67,10 +68,12 @@ export class GameDO implements DurableObject {
   private nextWarAt: number | null = null;
   private interval: ReturnType<typeof setInterval> | null = null;
   private loaded: Promise<void>;
+  private statsSink: StatsSink;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
+    this.statsSink = new StatsSink(env.HONEYCOMB_API_KEY, env.HONEYCOMB_DATASET ?? 'atbolo-sim');
     this.loaded = this.load();
   }
 
@@ -197,7 +200,7 @@ export class GameDO implements DurableObject {
           return;
         }
         helloed = true;
-        void this.handleHello(session, msg.token, msg.role === 'player' ? 'player' : 'spectator');
+        void this.handleHello(session, msg.token, msg.role === 'player' ? 'player' : 'spectator', msg.client);
         return;
       }
       if (--session.msgBudget < 0) return; // silently drop floods
@@ -221,7 +224,12 @@ export class GameDO implements DurableObject {
     ws.addEventListener('error', drop);
   }
 
-  private async handleHello(session: Session, token: string | undefined, role: 'player' | 'spectator'): Promise<void> {
+  private async handleHello(
+    session: Session,
+    token: string | undefined,
+    role: 'player' | 'spectator',
+    client?: string,
+  ): Promise<void> {
     const world = this.world!;
     if (role === 'player') {
       const payload = token ? await verifyToken(sessionSecret(this.env), token) : null;
@@ -243,7 +251,8 @@ export class GameDO implements DurableObject {
       session.did = payload.did;
       session.handle = payload.handle;
       if (this.phase === 'active') {
-        const tank = world.addTank(payload.did, payload.handle, profile.faction, false);
+        const clientKind = client === 'keyboard' || client === 'touch' || client === 'bot' ? client : 'unknown';
+        const tank = world.addTank(payload.did, payload.handle, profile.faction, false, clientKind);
         session.tankId = tank.id;
         this.fighters.add(payload.did);
       }
@@ -336,6 +345,10 @@ export class GameDO implements DurableObject {
           turn: clamp1(msg.turn),
           fire: !!msg.fire,
         });
+        // fine-aim tap: clamp each message's nudge to one tick's worth of turn
+        if (typeof msg.nudge === 'number' && Number.isFinite(msg.nudge)) {
+          world.addNudge(session.tankId, clamp1(msg.nudge / 0.35) * 0.35);
+        }
         break;
       case 'builder': {
         const err = world.builderOrder(
@@ -374,6 +387,7 @@ export class GameDO implements DurableObject {
       clearInterval(this.interval);
       this.interval = null;
     }
+    this.statsSink.flush();
   }
 
   private tick(counter: number): void {
@@ -395,6 +409,20 @@ export class GameDO implements DurableObject {
 
     const warMinutes = (Date.now() - world.startedAt) / 60000;
     const result = world.doTick(warMinutes);
+
+    if (this.statsSink.enabled && result.stats.length) {
+      let players = 0;
+      for (const s of this.sessions) if (s.role === 'player') players++;
+      for (const ev of result.stats) {
+        this.statsSink.push({
+          ...ev,
+          war_number: world.warNumber,
+          war_minute: Math.round(warMinutes * 10) / 10,
+          online_players: players,
+        });
+      }
+    }
+    if (counter % (TICK_HZ * 10) === 0) this.statsSink.flush();
 
     // fan out per-player state
     const stateBase = {

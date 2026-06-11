@@ -83,6 +83,8 @@ export interface TickResult {
   pillsChanged: boolean;
   basesChanged: boolean;
   warEnded: Faction | null;
+  /** balance-tuning telemetry accumulated this tick */
+  stats: StatEvent[];
 }
 
 export interface TankInput {
@@ -92,6 +94,9 @@ export interface TankInput {
   turn: number;
   fire: boolean;
 }
+
+/** A balance-tuning telemetry event, shipped by the DO (see stats.ts). */
+export type StatEvent = { name: 'shot' | 'kill' } & Record<string, string | number | boolean | undefined>;
 
 const W = MAP_SIZE;
 
@@ -110,11 +115,14 @@ export class World {
 
   private nextId = 1;
   private inputs = new Map<number, TankInput>();
+  /** queued fine-aim rotation per tank, drained at TANK_TURN_RATE (see addNudge) */
+  private nudges = new Map<number, number>();
   private refuelTimers = new Map<number, number>(); // baseId -> seconds until next transfer
   private regenTimers = new Map<number, number>();
 
   // accumulated during a tick
   private events: GameEvent[] = [];
+  private stats: StatEvent[] = [];
   private terrainChanges: [number, number, number][] = [];
   private mineChanges: [number, number, number][] = [];
   private pillsChanged = false;
@@ -161,7 +169,7 @@ export class World {
 
   // ---------- player lifecycle ----------
 
-  addTank(did: string, handle: string, faction: Faction, npc: boolean): Tank {
+  addTank(did: string, handle: string, faction: Faction, npc: boolean, client = npc ? 'npc' : 'unknown'): Tank {
     const id = this.nextId++;
     const tank: Tank = {
       id,
@@ -169,6 +177,7 @@ export class World {
       handle,
       faction,
       npc,
+      client,
       x: 0,
       y: 0,
       dir: 0,
@@ -199,10 +208,21 @@ export class World {
     if (tank.carriedPill !== null) this.dropCarriedPill(tank);
     this.tanks.delete(id);
     this.inputs.delete(id);
+    this.nudges.delete(id);
   }
 
   setInput(id: number, input: TankInput): void {
     if (this.tanks.has(id)) this.inputs.set(id, input);
+  }
+
+  /**
+   * Queue a fine-aim rotation. Drained in tickTank at TANK_TURN_RATE, so taps
+   * are never lost to tick quantization but also can't out-turn a held key.
+   */
+  addNudge(id: number, radians: number): void {
+    if (!this.tanks.has(id) || !Number.isFinite(radians)) return;
+    const pending = (this.nudges.get(id) ?? 0) + radians;
+    this.nudges.set(id, clamp(pending, -Math.PI, Math.PI));
   }
 
   /** Spawn at a friendly base; with no bases left, fall back to a coastal boat spawn. */
@@ -232,6 +252,7 @@ export class World {
     if (!tank || tank.alive || this.tick < tank.respawnTick) return;
     tank.alive = true;
     tank.armor = TANK_START_ARMOR;
+    tank.engagedTick = undefined;
     tank.shells = TANK_START_SHELLS;
     tank.mines = TANK_START_MINES;
     tank.trees = 0;
@@ -339,6 +360,7 @@ export class World {
   doTick(warMinutes: number): TickResult {
     this.tick++;
     this.events = [];
+    this.stats = [];
     this.terrainChanges = [];
     this.mineChanges = [];
     this.pillsChanged = false;
@@ -366,13 +388,23 @@ export class World {
       pillsChanged: this.pillsChanged,
       basesChanged: this.basesChanged,
       warEnded,
+      stats: this.stats,
     };
   }
 
   private tickTank(tank: Tank): void {
     const input = this.inputs.get(tank.id) ?? { accel: 0, turn: 0, fire: false };
 
-    tank.dir += input.turn * TANK_TURN_RATE * DT;
+    // held turn + queued fine-aim nudges, under one per-tick rotation budget:
+    // the held key takes priority, nudges drain from whatever budget remains
+    const maxStep = TANK_TURN_RATE * DT;
+    const turnStep = clamp(input.turn, -1, 1) * maxStep;
+    const pending = this.nudges.get(tank.id) ?? 0;
+    const budget = maxStep - Math.abs(turnStep);
+    const nudgeStep = clamp(pending, -budget, budget);
+    tank.dir += turnStep + nudgeStep;
+    if (Math.abs(pending - nudgeStep) > 1e-6) this.nudges.set(tank.id, pending - nudgeStep);
+    else this.nudges.delete(tank.id);
     if (tank.dir > Math.PI) tank.dir -= 2 * Math.PI;
     else if (tank.dir < -Math.PI) tank.dir += 2 * Math.PI;
 
@@ -511,6 +543,23 @@ export class World {
 
   // ---------- shells ----------
 
+  /** One telemetry event per shell, emitted when it resolves (hit or expired). */
+  private shotResolved(shell: Shell, outcome: string, victim?: Tank): void {
+    const fromPill = shell.ownerTank < 0;
+    const shooter = fromPill ? undefined : this.tanks.get(shell.ownerTank);
+    this.stats.push({
+      name: 'shot',
+      outcome, // 'tank' | 'builder' | 'pill' | 'base' | 'wall' | 'expired'
+      shooter: fromPill ? 'pillbox' : 'tank',
+      shooter_npc: shooter?.npc,
+      shooter_client: shooter?.client,
+      shooter_faction: String(shell.faction),
+      travel_tiles: round2stat((fromPill ? PILL_RANGE : SHELL_RANGE) - shell.range),
+      target_npc: victim?.npc,
+      target_client: victim?.client,
+    });
+  }
+
   private tickShells(): void {
     const step = 0.25; // substep length in tiles, to avoid tunnelling
     const survivors: Shell[] = [];
@@ -526,6 +575,7 @@ export class World {
         dead = this.shellCollide(shell);
         if (!dead && shell.range <= 0) {
           this.shellDetonateTerrain(shell);
+          this.shotResolved(shell, 'expired');
           dead = true;
         }
       }
@@ -535,13 +585,17 @@ export class World {
   }
 
   private shellCollide(shell: Shell): boolean {
-    if (shell.x < 0 || shell.y < 0 || shell.x >= W || shell.y >= W) return true;
+    if (shell.x < 0 || shell.y < 0 || shell.x >= W || shell.y >= W) {
+      this.shotResolved(shell, 'expired');
+      return true;
+    }
     const xi = Math.floor(shell.x);
     const yi = Math.floor(shell.y);
     const t = this.terrain[idx(xi, yi)] as Terrain;
 
     if (TERRAIN[t].blocksShells) {
       this.shellDetonateTerrain(shell);
+      this.shotResolved(shell, 'wall');
       return true;
     }
 
@@ -551,6 +605,7 @@ export class World {
       base.armorStock = Math.max(0, base.armorStock - SHELL_DAMAGE);
       this.basesChanged = true;
       this.events.push({ e: 'boom', x: shell.x, y: shell.y, kind: 'shell' });
+      this.shotResolved(shell, 'base');
       return true;
     }
 
@@ -561,6 +616,7 @@ export class World {
       pill.cooldown = Math.min(pill.cooldown, this.pillCooldownFor(pill)); // freshly angry
       this.pillsChanged = true;
       this.events.push({ e: 'boom', x: shell.x, y: shell.y, kind: 'shell' });
+      this.shotResolved(shell, 'pill');
       return true;
     }
 
@@ -568,6 +624,7 @@ export class World {
       if (!tank.alive || tank.faction === shell.faction || tank.id === shell.ownerTank) continue;
       if (Math.hypot(tank.x - shell.x, tank.y - shell.y) < TANK_RADIUS) {
         const killer = this.tanks.get(shell.ownerTank) ?? null;
+        this.shotResolved(shell, 'tank', tank);
         this.damageTank(tank, SHELL_DAMAGE, shell.ownerTank < 0 ? 'pillbox' : 'shell', killer);
         this.events.push({ e: 'boom', x: shell.x, y: shell.y, kind: 'shell' });
         return true;
@@ -579,6 +636,7 @@ export class World {
         Math.hypot(b.x - shell.x, b.y - shell.y) < 0.3
       ) {
         this.killBuilder(tank);
+        this.shotResolved(shell, 'builder', tank);
         return true;
       }
     }
@@ -713,6 +771,8 @@ export class World {
               tank.armor++;
               base.armorStock--;
               used = true;
+              // patched back to full: the next damage starts a new engagement
+              if (tank.armor >= TANK_MAX_ARMOR) tank.engagedTick = undefined;
             }
             if (tank.shells < TANK_MAX_SHELLS && base.shellStock > 0) {
               tank.shells++;
@@ -892,12 +952,26 @@ export class World {
 
   private damageTank(tank: Tank, amount: number, cause: 'shell' | 'mine' | 'pillbox' | 'sea', killer: Tank | null): void {
     if (!tank.alive) return;
+    if (tank.engagedTick === undefined) tank.engagedTick = this.tick;
     tank.armor -= amount;
     if (tank.armor <= 0) this.killTank(tank, cause, killer);
   }
 
   private killTank(tank: Tank, cause: 'shell' | 'mine' | 'pillbox' | 'sea', killer: Tank | null): void {
     if (!tank.alive) return;
+    this.stats.push({
+      name: 'kill',
+      cause,
+      ttk_s: tank.engagedTick !== undefined ? (this.tick - tank.engagedTick) / TICK_HZ : undefined,
+      victim_npc: tank.npc,
+      victim_client: tank.client,
+      victim_faction: tank.faction,
+      killer_npc: killer?.npc,
+      killer_client: killer?.client,
+      killer_faction: killer?.faction,
+      kill_dist_tiles: killer ? round2stat(Math.hypot(killer.x - tank.x, killer.y - tank.y)) : undefined,
+    });
+    tank.engagedTick = undefined;
     tank.alive = false;
     tank.deaths++;
     tank.respawnTick = this.tick + TANK_RESPAWN_SECONDS * TICK_HZ;
@@ -972,6 +1046,10 @@ function canBuildOn(t: Terrain): boolean {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
+}
+
+function round2stat(v: number): number {
+  return Math.round(v * 100) / 100;
 }
 
 function clampInt(v: number, lo: number, hi: number): number {

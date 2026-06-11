@@ -47,6 +47,10 @@ export interface Tank {
   kills: number;
   deaths: number;
   caps: number; // bases + pillboxes captured
+  /** input kind from hello ('npc' for garrison tanks) — telemetry segmentation */
+  client: string;
+  /** server-only: tick of first damage in the current engagement (TTK telemetry) */
+  engagedTick?: number;
 }
 
 export interface Shell {

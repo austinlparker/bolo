@@ -13,6 +13,8 @@ export interface HelloMsg {
   /** session token from /api/login/verify (or /api/login/dev). Omit for spectators. */
   token?: string;
   role: 'player' | 'spectator';
+  /** what's driving this player — segments balance telemetry (accuracy by input kind) */
+  client?: 'keyboard' | 'touch' | 'bot';
 }
 
 /**
@@ -25,6 +27,12 @@ export interface InputMsg {
   accel: number;
   turn: number; // positive turns clockwise (screen-space, y-down)
   fire: boolean;
+  /**
+   * Fine-aim tap: a discrete extra rotation in radians, queued server-side
+   * and drained at the standard turn rate (so taps are lossless at any tick
+   * rate but can never out-turn a held key). Clamped per message.
+   */
+  nudge?: number;
 }
 
 export interface BuilderMsg {

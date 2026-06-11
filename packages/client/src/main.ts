@@ -63,7 +63,12 @@ async function startPlayer(): Promise<void> {
   const touch = isTouchDevice();
   if (touch) document.body.classList.add('touch-mode');
 
-  const net = new Net(handleMsg, () => ({ t: 'hello', token: creds!.token, role: 'player' }));
+  const net = new Net(handleMsg, () => ({
+    t: 'hello',
+    token: creds!.token,
+    role: 'player',
+    client: touch ? 'touch' : 'keyboard',
+  }));
   hud.onRecall = () => net.send({ t: 'builder_recall' });
   hud.onEmote = (kind) => net.send({ t: 'emote', kind });
   const touchControls = touch ? new TouchControls(root, net) : null;

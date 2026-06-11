@@ -5,6 +5,10 @@ export interface Env {
   DEV_AUTH: string;
   /** HMAC key for session tokens; set via `wrangler secret put SESSION_SECRET` */
   SESSION_SECRET?: string;
+  /** Honeycomb ingest key for balance telemetry; unset = telemetry disabled */
+  HONEYCOMB_API_KEY?: string;
+  /** Honeycomb dataset for balance telemetry (default "atbolo-sim") */
+  HONEYCOMB_DATASET?: string;
 }
 
 export function sessionSecret(env: Env): string {
