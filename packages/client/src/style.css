@@ -1,0 +1,297 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --dawn: #e8a33d;
+  --dusk: #8a6de8;
+  --bg: #0c0e12;
+  --panel: rgba(14, 17, 23, 0.88);
+  --line: #2a2f3a;
+  --text: #cfd6e4;
+  --dim: #79829a;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Courier New', ui-monospace, monospace;
+  overflow: hidden;
+}
+
+#app,
+canvas.game {
+  position: fixed;
+  inset: 0;
+}
+
+canvas.game {
+  display: block;
+  image-rendering: pixelated;
+}
+
+/* ---------- login ---------- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, #131722 0%, #07080c 100%);
+  z-index: 50;
+}
+
+.login-box {
+  width: 420px;
+  max-width: 92vw;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  padding: 28px;
+}
+
+.login-box h1 {
+  font-size: 42px;
+  letter-spacing: 12px;
+  text-align: center;
+  color: var(--dawn);
+  text-shadow: 3px 3px 0 #4a3000;
+}
+
+.login-box .sub {
+  text-align: center;
+  color: var(--dim);
+  margin: 6px 0 22px;
+  font-size: 12px;
+}
+
+.login-box label {
+  display: block;
+  font-size: 12px;
+  color: var(--dim);
+  margin: 12px 0 4px;
+}
+
+.login-box input {
+  width: 100%;
+  padding: 9px 10px;
+  background: #0a0c10;
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.login-box input:focus {
+  outline: none;
+  border-color: var(--dawn);
+}
+
+.login-box button {
+  width: 100%;
+  margin-top: 18px;
+  padding: 11px;
+  background: var(--dawn);
+  border: none;
+  color: #1a1206;
+  font-family: inherit;
+  font-weight: bold;
+  font-size: 14px;
+  letter-spacing: 2px;
+  cursor: pointer;
+}
+
+.login-box button:hover {
+  filter: brightness(1.1);
+}
+
+.login-box button.secondary {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--dim);
+  margin-top: 10px;
+}
+
+.login-box .error {
+  color: #e86d6d;
+  font-size: 12px;
+  margin-top: 10px;
+  min-height: 16px;
+}
+
+.login-box .links {
+  margin-top: 16px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.login-box a {
+  color: var(--dim);
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--dim);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+/* ---------- HUD ---------- */
+.hud {
+  position: fixed;
+  pointer-events: none;
+  z-index: 10;
+  font-size: 12px;
+}
+
+#hud-status {
+  top: 10px;
+  left: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 8px 12px;
+  line-height: 1.7;
+}
+
+#hud-war {
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 6px 14px;
+  text-align: center;
+}
+
+#hud-tools {
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  pointer-events: auto;
+  display: flex;
+  gap: 4px;
+}
+
+#hud-tools .tool {
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  color: var(--dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+#hud-tools .tool.active {
+  border-color: var(--dawn);
+  color: var(--dawn);
+}
+
+#hud-feed {
+  top: 10px;
+  right: 10px;
+  width: 280px;
+  text-align: right;
+  color: var(--dim);
+  text-shadow: 1px 1px 0 #000;
+}
+
+#hud-feed div {
+  margin-bottom: 2px;
+}
+
+#hud-chat {
+  bottom: 10px;
+  left: 10px;
+  width: 320px;
+  pointer-events: auto;
+}
+
+#chat-log {
+  max-height: 140px;
+  overflow-y: auto;
+  font-size: 12px;
+  text-shadow: 1px 1px 0 #000;
+  margin-bottom: 4px;
+}
+
+#chat-input {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-family: inherit;
+  display: none;
+}
+
+#hud-minimap {
+  bottom: 10px;
+  right: 10px;
+  border: 1px solid var(--line);
+  background: #000;
+}
+
+.f-dawn { color: var(--dawn); }
+.f-dusk { color: var(--dusk); }
+.f-neutral { color: #9aa; }
+.f-system { color: #6b7385; font-style: italic; }
+
+/* ---------- toast / banner ---------- */
+#banner {
+  position: fixed;
+  top: 30%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 28px;
+  letter-spacing: 6px;
+  text-shadow: 2px 2px 0 #000;
+  z-index: 20;
+  pointer-events: none;
+  text-align: center;
+  display: none;
+}
+
+/* ---------- spectator ---------- */
+.spec-panel {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 10px 14px;
+  z-index: 10;
+  font-size: 12px;
+  line-height: 1.8;
+  max-width: 320px;
+}
+
+.spec-panel h2 {
+  font-size: 14px;
+  letter-spacing: 4px;
+  margin-bottom: 4px;
+}
+
+.spec-panel .bar {
+  display: flex;
+  height: 10px;
+  border: 1px solid var(--line);
+  margin: 6px 0;
+}
+
+.spec-panel .bar .dawn { background: var(--dawn); }
+.spec-panel .bar .dusk { background: var(--dusk); }
+.spec-panel .bar .neutral { background: #444; }
+
+a.button-link {
+  color: var(--dawn);
+  text-decoration: none;
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+  display: inline-block;
+  margin-top: 8px;
+}

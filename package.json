@@ -1,0 +1,13 @@
+{
+  "name": "bolo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A persistent-world, massively-multiplayer-ish reimagining of the classic Mac tank game Bolo",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "dev": "pnpm --parallel -r dev",
+    "build": "pnpm -r build",
+    "deploy": "pnpm --filter @bolo/client build && pnpm --filter @bolo/server deploy"
+  },
+  "packageManager": "pnpm@10.33.0"
+}

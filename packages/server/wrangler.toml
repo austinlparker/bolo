@@ -1,0 +1,25 @@
+name = "bolo"
+main = "src/index.ts"
+compatibility_date = "2025-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+# The whole world lives in a single Durable Object instance ("world").
+# At O(tens) of concurrent players a single DO at 10Hz is comfortable.
+[durable_objects]
+bindings = [{ name = "GAME", class_name = "GameDO" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GameDO"]
+
+[assets]
+directory = "../client/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[vars]
+# Set to "1" to allow /api/login/dev (no atproto round-trip) for local play.
+DEV_AUTH = "0"
+
+# Secrets (set with `wrangler secret put`):
+#   SESSION_SECRET - HMAC key for session tokens. Required in production.

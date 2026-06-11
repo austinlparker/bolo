@@ -1,0 +1,21 @@
+{
+  "name": "@bolo/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@bolo/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250508.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.14.0"
+  }
+}

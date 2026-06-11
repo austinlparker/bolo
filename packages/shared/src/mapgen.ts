@@ -1,0 +1,233 @@
+/**
+ * Procedural island generator. Maps are 180°-rotationally symmetric so
+ * neither faction gets a terrain advantage: tile (x, y) always mirrors
+ * tile (W-1-x, H-1-y). Dawn starts near the north-west, Dusk near the
+ * south-east.
+ */
+import {
+  BASES_PER_FACTION_AT_START,
+  BASE_MAX_ARMOR_STOCK,
+  BASE_MAX_MINE_STOCK,
+  BASE_MAX_SHELL_STOCK,
+  BASE_START_STOCK,
+  MAP_SIZE,
+  PILL_MAX_HP,
+  TOTAL_BASES,
+  TOTAL_PILLS,
+} from './constants';
+import { fbm2, hash32, mulberry32 } from './rng';
+import { MineState, Terrain } from './terrain';
+import type { Base, Pillbox } from './types';
+
+export interface GeneratedMap {
+  size: number;
+  terrain: Uint8Array;
+  mines: Uint8Array;
+  bases: Base[];
+  pills: Pillbox[];
+}
+
+const W = MAP_SIZE;
+
+export function idx(x: number, y: number): number {
+  return y * W + x;
+}
+
+function mirror(x: number, y: number): [number, number] {
+  return [W - 1 - x, W - 1 - y];
+}
+
+export function generateMap(seed: number): GeneratedMap {
+  const terrain = new Uint8Array(W * W);
+  const mines = new Uint8Array(W * W);
+  const rand = mulberry32(hash32(seed, 0xb010));
+
+  const elevSeed = hash32(seed, 1);
+  const forestSeed = hash32(seed, 2);
+  const riverSeed = hash32(seed, 3);
+  const swampSeed = hash32(seed, 4);
+
+  // --- terrain from noise, island falloff towards the edges ---
+  const c = (W - 1) / 2;
+  for (let y = 0; y < W; y++) {
+    for (let x = 0; x < W; x++) {
+      const nx = x / W;
+      const ny = y / W;
+      const dx = (x - c) / c;
+      const dy = (y - c) / c;
+      const r = Math.sqrt(dx * dx + dy * dy);
+      const falloff = Math.max(0, r - 0.55) * 1.8;
+      const elev = fbm2(elevSeed, nx * 6, ny * 6, 5) - falloff;
+
+      let t: Terrain;
+      if (elev < 0.32) t = Terrain.DeepSea;
+      else if (elev < 0.38) t = Terrain.River; // shallow coastal water
+      else if (elev < 0.42 && fbm2(swampSeed, nx * 10, ny * 10, 3) > 0.5) t = Terrain.Swamp;
+      else {
+        // winding rivers along noise ridge lines, only on land
+        const rn = fbm2(riverSeed, nx * 5, ny * 5, 4);
+        if (Math.abs(rn - 0.5) < 0.012) t = Terrain.River;
+        else if (fbm2(forestSeed, nx * 9, ny * 9, 4) > 0.58) t = Terrain.Forest;
+        else t = Terrain.Grass;
+      }
+      terrain[idx(x, y)] = t;
+    }
+  }
+
+  // enforce 180° symmetry: second half of the array mirrors the first
+  const half = Math.floor((W * W) / 2);
+  for (let i = 0; i < half; i++) {
+    terrain[W * W - 1 - i] = terrain[i];
+  }
+
+  // --- base sites: pick well-spaced land tiles in the canonical half, mirror them ---
+  const pairCount = TOTAL_BASES / 2;
+  const baseSites = pickSites(terrain, rand, pairCount, 24, 0.18, 0.5);
+  const bases: Base[] = [];
+  // The BASES_PER_FACTION_AT_START sites closest to the NW corner start owned by Dawn.
+  const ranked = [...baseSites].sort((a, b) => a[0] + a[1] - (b[0] + b[1]));
+  const dawnStarters = new Set(ranked.slice(0, BASES_PER_FACTION_AT_START).map(([x, y]) => idx(x, y)));
+  let baseId = 0;
+  for (const [x, y] of baseSites) {
+    const [mx, my] = mirror(x, y);
+    const starter = dawnStarters.has(idx(x, y));
+    const stock = (max: number) => Math.floor(max * (starter ? 1 : BASE_START_STOCK));
+    for (const [bx, by, owner] of [
+      [x, y, starter ? 'dawn' : 'neutral'],
+      [mx, my, starter ? 'dusk' : 'neutral'],
+    ] as const) {
+      clearPad(terrain, bx, by);
+      bases.push({
+        id: baseId++,
+        x: bx,
+        y: by,
+        owner,
+        armorStock: stock(BASE_MAX_ARMOR_STOCK),
+        shellStock: stock(BASE_MAX_SHELL_STOCK),
+        mineStock: stock(BASE_MAX_MINE_STOCK),
+      });
+    }
+  }
+
+  // --- pillboxes: neutral, scattered on land away from base pads ---
+  const pillSites = pickSites(terrain, rand, TOTAL_PILLS / 2, 14, 0.12, 0.5, baseSites);
+  const pills: Pillbox[] = [];
+  let pillId = 0;
+  for (const [x, y] of pillSites) {
+    const [mx, my] = mirror(x, y);
+    for (const [px, py] of [
+      [x, y],
+      [mx, my],
+    ] as const) {
+      terrain[idx(px, py)] = Terrain.Grass;
+      pills.push({ id: pillId++, x: px, y: py, owner: 'neutral', hp: PILL_MAX_HP, inTank: false, cooldown: 0 });
+    }
+  }
+
+  // --- roads: connect each base to its nearest neighbour (bridges over rivers) ---
+  for (const b of bases) {
+    let best: Base | null = null;
+    let bestD = Infinity;
+    for (const o of bases) {
+      if (o.id === b.id) continue;
+      const d = Math.abs(o.x - b.x) + Math.abs(o.y - b.y);
+      if (d < bestD) {
+        bestD = d;
+        best = o;
+      }
+    }
+    if (best) layRoad(terrain, b.x, b.y, best.x, best.y);
+  }
+
+  // --- hidden neutral mines in the contested middle of the island ---
+  const mineCount = 40;
+  for (let placed = 0; placed < mineCount; ) {
+    const x = 32 + Math.floor(rand() * (W - 64));
+    const y = 32 + Math.floor(rand() * (W - 64));
+    const t = terrain[idx(x, y)] as Terrain;
+    if (t === Terrain.Grass || t === Terrain.Forest || t === Terrain.Swamp) {
+      mines[idx(x, y)] = MineState.Neutral;
+      const [mx, my] = mirror(x, y);
+      mines[idx(mx, my)] = MineState.Neutral;
+      placed++;
+    }
+  }
+
+  return { size: W, terrain, mines, bases, pills };
+}
+
+/** Flatten a 3x3 pad of grass with the centre tile kept clear for a base. */
+function clearPad(terrain: Uint8Array, cx: number, cy: number): void {
+  for (let y = cy - 1; y <= cy + 1; y++) {
+    for (let x = cx - 1; x <= cx + 1; x++) {
+      if (x < 0 || y < 0 || x >= W || y >= W) continue;
+      terrain[idx(x, y)] = Terrain.Grass;
+    }
+  }
+  terrain[idx(cx, cy)] = Terrain.Road;
+}
+
+/**
+ * Pick `count` mutually-distant land tiles inside the canonical (NW) half.
+ * `inner`/`outer` bound the normalized distance from the map border.
+ */
+function pickSites(
+  terrain: Uint8Array,
+  rand: () => number,
+  count: number,
+  minSpacing: number,
+  inner: number,
+  outer: number,
+  avoid: [number, number][] = [],
+): [number, number][] {
+  const sites: [number, number][] = [];
+  const lo = Math.floor(W * inner);
+  const hi = Math.floor(W * (1 - inner));
+  let attempts = 0;
+  while (sites.length < count && attempts < 8000) {
+    attempts++;
+    const x = lo + Math.floor(rand() * (hi - lo));
+    const y = lo + Math.floor(rand() * (hi - lo));
+    // canonical half only (strictly above the anti-diagonal mirror line)
+    if (y * W + x >= (W * W) / 2) continue;
+    const t = terrain[idx(x, y)] as Terrain;
+    if (t !== Terrain.Grass && t !== Terrain.Forest) continue;
+    const tooClose = [...sites, ...avoid].some(
+      ([sx, sy]) => Math.abs(sx - x) + Math.abs(sy - y) < minSpacing,
+    );
+    // also keep clear of the mirror images of already-picked sites
+    const mirrorClose = sites.some(([sx, sy]) => {
+      const [mx, my] = mirror(sx, sy);
+      return Math.abs(mx - x) + Math.abs(my - y) < minSpacing;
+    });
+    if (!tooClose && !mirrorClose) sites.push([x, y]);
+  }
+  return sites;
+}
+
+/** L-shaped road; roads laid over river tiles read as bridges, Bolo style. */
+function layRoad(terrain: Uint8Array, x0: number, y0: number, x1: number, y1: number): void {
+  const sx = Math.sign(x1 - x0);
+  for (let x = x0; x !== x1; x += sx) paveTile(terrain, x, y0);
+  const sy = Math.sign(y1 - y0);
+  for (let y = y0; y !== y1 + sy; y += sy || 1) {
+    paveTile(terrain, x1, y);
+    if (sy === 0) break;
+  }
+}
+
+function paveTile(terrain: Uint8Array, x: number, y: number): void {
+  if (x < 0 || y < 0 || x >= W || y >= W) return;
+  const t = terrain[idx(x, y)] as Terrain;
+  if (t === Terrain.DeepSea) return; // no causeways across open sea
+  terrain[idx(x, y)] = Terrain.Road;
+  // mirror to preserve symmetry
+  const [mx, my] = mirror(x, y);
+  const mt = terrain[idx(mx, my)] as Terrain;
+  if (mt !== Terrain.DeepSea) terrain[idx(mx, my)] = Terrain.Road;
+}
+
+/** The next war's seed chains off the previous one, so history shapes geography. */
+export function nextWarSeed(prevSeed: number, warNumber: number): number {
+  return hash32(prevSeed, warNumber, 0x5eed);
+}
