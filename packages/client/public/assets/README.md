@@ -7,13 +7,16 @@ Lives under `public/` so files keep stable URLs — load in the canvas renderer 
 Wiring status (`src/sprites.ts` is the manifest/loader; painters fall back to procedural
 drawing until sprites load, and permanently for anything not listed):
 
-- **Wired**: grass, the full road connection set, forest trees, tank bodies+barrels
-  (dawn→sand, dusk→blue), bullets, shell/mine explosion frame sequences, joystick pad skin.
-- **Deliberately procedural**: water/sea (our navy palette fits BOLO better than Map Pack's
-  icy blue), buildings/walls, pillboxes and base pads (they encode owner + hp state),
-  the builder ("little green man"), mine markers, minimap blips.
-- **Unused for now**: Map Pack atlas (style too pastel next to Topdown Tanks), UI Pack
-  chrome, crosshairs.
+- **Wired, with load-time recoloring** (blend-mode tints in `src/sprites.ts` keep one
+  consistent palette): grass, the full road connection set, forest trees; Map Pack water
+  retargeted to BOLO navy (deep/river variants); Map Pack dirt -> craters, gray rock ->
+  walls; tower -> pillboxes and castle -> bases, faction-tinted (dawn amber / dusk violet /
+  neutral gray / dead husk); tank+barrel+bullet from single sand bases, faction-multiplied;
+  tracers colored per faction; the little green man (mapTile_136) as the builder;
+  explosion frame sequences; joystick pad skins.
+- **Still procedural**: mine markers, hp/stock bars, anger auras, shadows, coast foam and
+  river banks, boat hulls, minimap blips - state overlays, not art.
+- **Unused for now**: UI Pack chrome, crosshairs.
 
 ## License
 

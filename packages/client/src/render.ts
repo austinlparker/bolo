@@ -24,6 +24,12 @@ const FACTION_DARK: Record<Faction | 'neutral', string> = {
   neutral: '#5d646b',
 };
 
+const TRACER_COLORS: Record<string, string> = {
+  dawn: 'rgba(255,200,120,0.5)',
+  dusk: 'rgba(190,160,255,0.5)',
+  neutral: 'rgba(220,226,236,0.45)',
+};
+
 export class Renderer {
   canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -120,18 +126,20 @@ export class Renderer {
       this.drawTank(state, it, now, toScreen, onScreen);
     }
 
-    // shells: tracer trail + bullet sprite (or a dot pre-load)
+    // shells: faction-tinted tracer + bullet sprite (or a dot pre-load)
     for (const s of state.shells) {
       const [px, py] = toScreen(s.x, s.y);
       if (!onScreen(px, py, 20)) continue;
       const tail = 0.55 * this.scale;
-      ctx.strokeStyle = 'rgba(255,224,160,0.45)';
+      ctx.strokeStyle = TRACER_COLORS[s.f] ?? TRACER_COLORS.neutral;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(px - Math.cos(s.dir) * tail, py - Math.sin(s.dir) * tail);
       ctx.lineTo(px, py);
       ctx.stroke();
-      const bullet = sprites.ready ? sprites.images.bullet : undefined;
+      const bullet = sprites.ready
+        ? sprites.images[s.f === 'dawn' ? 'bulletDawn' : s.f === 'dusk' ? 'bulletDusk' : 'bulletNeutral']
+        : undefined;
       if (bullet) {
         ctx.save();
         ctx.translate(px, py);
@@ -298,12 +306,13 @@ export class Renderer {
     ctx.fillText(label, px, py - r - 5.5);
   }
 
-  /** The little green man. Bobs while walking, swings a hammer while working. */
+  /** The little green man (Map Pack sprite). Bobs while walking, rocks while working. */
   private drawBuilder(px: number, py: number, faction: Faction, phase: string, now: number): void {
     const ctx = this.ctx;
     const s = this.scale;
     const walking = phase === 'outbound' || phase === 'returning';
     const bob = walking ? Math.sin(now / 90) : 0;
+    const img = sprites.ready ? sprites.images.builderMan : undefined;
 
     ctx.save();
     ctx.translate(px, py + bob * 1.2);
@@ -311,44 +320,37 @@ export class Renderer {
     // shadow
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.beginPath();
-    ctx.ellipse(1, 2.5, s * 0.16, s * 0.1, 0, 0, Math.PI * 2);
+    ctx.ellipse(1, s * 0.2, s * 0.16, s * 0.09, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // legs scuttling
-    if (walking) {
-      ctx.strokeStyle = '#2a7034';
+    if (img) {
+      const w = s * 0.46;
+      // working: rock side to side like he's putting his back into it
+      if (phase === 'working') ctx.rotate(Math.sin(now / 120) * 0.3);
+      // faction band under his feet so you know whose engineer he is
+      ctx.strokeStyle = FACTION_COLORS[faction];
       ctx.lineWidth = 2;
-      const step = Math.sin(now / 90) * s * 0.08;
       ctx.beginPath();
-      ctx.moveTo(-s * 0.05, s * 0.08);
-      ctx.lineTo(-s * 0.05 + step, s * 0.2);
-      ctx.moveTo(s * 0.05, s * 0.08);
-      ctx.lineTo(s * 0.05 - step, s * 0.2);
+      ctx.ellipse(0, s * 0.18, s * 0.15, s * 0.07, 0, 0, Math.PI * 2);
       ctx.stroke();
+      ctx.drawImage(img, -w / 2, -w * 0.62, w, w);
+    } else {
+      // procedural fallback green man
+      ctx.fillStyle = '#3fae49';
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#8ad88f';
+      ctx.beginPath();
+      ctx.arc(0, -s * 0.1, s * 0.09, 0, Math.PI * 2);
+      ctx.fill();
     }
-
-    // body
-    ctx.fillStyle = '#3fae49';
-    ctx.beginPath();
-    ctx.arc(0, 0, s * 0.15, 0, Math.PI * 2);
-    ctx.fill();
-    // head
-    ctx.fillStyle = '#8ad88f';
-    ctx.beginPath();
-    ctx.arc(0, -s * 0.1, s * 0.09, 0, Math.PI * 2);
-    ctx.fill();
-    // faction hard-hat
-    ctx.strokeStyle = FACTION_COLORS[faction];
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(0, -s * 0.11, s * 0.09, Math.PI * 1.05, Math.PI * 1.95);
-    ctx.stroke();
 
     // hammer swing while working
     if (phase === 'working') {
       const swing = Math.sin(now / 120) * 0.9;
       ctx.save();
-      ctx.translate(s * 0.14, -s * 0.02);
+      ctx.translate(s * 0.16, -s * 0.05);
       ctx.rotate(swing);
       ctx.strokeStyle = '#caa86a';
       ctx.lineWidth = 1.5;
@@ -364,119 +366,99 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** Classic Bolo octagonal bunker with a dome. Glows red when furious. */
+  /** Watchtower sprite, faction-tinted. Glows red when furious. */
   private drawPill(px: number, py: number, owner: Faction | 'neutral', hp: number, now: number): void {
     const ctx = this.ctx;
-    const s = this.scale * 0.82;
+    const s = this.scale * 0.95;
+    const dead = hp <= 0;
+    const angry = !dead && hp < PILL_MAX_HP * 0.35;
 
-    if (hp <= 0) {
-      // dead husk: cracked outline, salvageable
-      ctx.strokeStyle = '#4a4f58';
-      ctx.lineWidth = 1.5;
-      octagon(ctx, px, py, s / 2);
-      ctx.stroke();
-      ctx.strokeStyle = '#383d45';
+    const key = dead
+      ? 'towerHusk'
+      : owner === 'dawn'
+        ? 'towerDawn'
+        : owner === 'dusk'
+          ? 'towerDusk'
+          : 'towerNeutral';
+    const img = sprites.ready ? sprites.images[key] : undefined;
+
+    // anger aura behind the tower
+    if (angry) {
+      const pulse = 0.35 + 0.25 * Math.sin(now / 110);
+      ctx.fillStyle = `rgba(225,60,50,${pulse * 0.55})`;
       ctx.beginPath();
-      ctx.moveTo(px - s * 0.2, py - s * 0.15);
-      ctx.lineTo(px + s * 0.1, py + s * 0.2);
+      ctx.arc(px, py, s * 0.72, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(255,80,60,${pulse})`;
+      ctx.lineWidth = 2;
       ctx.stroke();
-      return;
     }
 
-    const angry = hp < PILL_MAX_HP * 0.35;
-    // anger aura
-    if (angry) {
-      const pulse = 0.25 + 0.2 * Math.sin(now / 110);
-      ctx.fillStyle = `rgba(232,93,93,${pulse})`;
-      octagon(ctx, px, py, s * 0.72);
+    if (img) {
+      // shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.28)';
+      ctx.beginPath();
+      ctx.ellipse(px + 1.5, py + s * 0.32, s * 0.4, s * 0.18, 0, 0, Math.PI * 2);
+      ctx.fill();
+      if (dead) ctx.globalAlpha = 0.8;
+      ctx.drawImage(img, px - s / 2, py - s / 2, s, s);
+      ctx.globalAlpha = 1;
+      if (dead) {
+        // crack across the ruin
+        ctx.strokeStyle = 'rgba(10,12,16,0.7)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(px - s * 0.18, py - s * 0.22);
+        ctx.lineTo(px + s * 0.05, py + s * 0.05);
+        ctx.lineTo(px - s * 0.06, py + s * 0.28);
+        ctx.stroke();
+      }
+    } else {
+      // procedural fallback: simple bunker block
+      ctx.fillStyle = dead ? '#383d45' : '#565d68';
+      octagon(ctx, px, py, s / 2);
+      ctx.fill();
+      ctx.fillStyle = FACTION_COLORS[owner];
+      ctx.beginPath();
+      ctx.arc(px, py, s * 0.18, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // shadow + walls
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    octagon(ctx, px + 1.5, py + 2, s / 2);
-    ctx.fill();
-    ctx.fillStyle = '#3a3f48';
-    octagon(ctx, px, py, s / 2);
-    ctx.fill();
-    ctx.fillStyle = '#565d68';
-    octagon(ctx, px, py, s * 0.41);
-    ctx.fill();
-
-    // gun slits NSEW
-    ctx.fillStyle = '#14161b';
-    ctx.fillRect(px - 1.5, py - s / 2 + 1, 3, 4);
-    ctx.fillRect(px - 1.5, py + s / 2 - 5, 3, 4);
-    ctx.fillRect(px - s / 2 + 1, py - 1.5, 4, 3);
-    ctx.fillRect(px + s / 2 - 5, py - 1.5, 4, 3);
-
-    // faction dome
-    ctx.fillStyle = FACTION_DARK[owner];
-    ctx.beginPath();
-    ctx.arc(px, py, s * 0.22, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = FACTION_COLORS[owner];
-    ctx.beginPath();
-    ctx.arc(px - s * 0.04, py - s * 0.04, s * 0.15, 0, Math.PI * 2);
-    ctx.fill();
-
-    // hp bar
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(px - s / 2, py + s / 2 + 3, s, 3);
-    ctx.fillStyle = angry ? '#e85d5d' : '#7fc46a';
-    ctx.fillRect(px - s / 2, py + s / 2 + 3, (s * hp) / PILL_MAX_HP, 3);
+    if (!dead) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(px - s / 2, py + s / 2 + 3, s, 3);
+      ctx.fillStyle = angry ? '#e85d5d' : '#7fc46a';
+      ctx.fillRect(px - s / 2, py + s / 2 + 3, (s * hp) / PILL_MAX_HP, 3);
+    }
   }
 
-  /** Supply pad: corner brackets, center ring, faction flag. */
+  /** Castle sprite, faction-tinted, with the armor-stock siege bar. */
   private drawBase(px: number, py: number, owner: Faction | 'neutral', armorStock: number): void {
     const ctx = this.ctx;
-    const s = this.scale * 1.1;
+    const s = this.scale * 1.25;
     const c = FACTION_COLORS[owner];
+    const img = sprites.ready
+      ? sprites.images[owner === 'dawn' ? 'castleDawn' : owner === 'dusk' ? 'castleDusk' : 'castleNeutral']
+      : undefined;
 
-    // pad plate
-    ctx.fillStyle = 'rgba(20,22,28,0.45)';
-    ctx.fillRect(px - s / 2, py - s / 2, s, s);
-
-    // corner brackets
-    ctx.strokeStyle = c;
-    ctx.lineWidth = 2;
-    const k = s / 2;
-    const b = s * 0.28;
-    for (const [mx, my] of [
-      [-1, -1], [1, -1], [-1, 1], [1, 1],
-    ] as const) {
+    if (img) {
+      ctx.fillStyle = 'rgba(0,0,0,0.28)';
       ctx.beginPath();
-      ctx.moveTo(px + mx * k, py + my * (k - b));
-      ctx.lineTo(px + mx * k, py + my * k);
-      ctx.lineTo(px + mx * (k - b), py + my * k);
-      ctx.stroke();
+      ctx.ellipse(px + 2, py + s * 0.3, s * 0.45, s * 0.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.drawImage(img, px - s / 2, py - s / 2, s, s);
+    } else {
+      // procedural fallback: bracketed pad
+      ctx.fillStyle = 'rgba(20,22,28,0.45)';
+      ctx.fillRect(px - s / 2, py - s / 2, s, s);
+      ctx.strokeStyle = c;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(px - s / 2, py - s / 2, s, s);
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(px, py, s * 0.13, 0, Math.PI * 2);
+      ctx.fill();
     }
-
-    // center ring + core
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(px, py, s * 0.26, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = c;
-    ctx.beginPath();
-    ctx.arc(px, py, s * 0.13, 0, Math.PI * 2);
-    ctx.fill();
-
-    // flag
-    ctx.strokeStyle = '#d8dbe2';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(px + s * 0.34, py - s * 0.5);
-    ctx.lineTo(px + s * 0.34, py - s * 0.18);
-    ctx.stroke();
-    ctx.fillStyle = c;
-    ctx.beginPath();
-    ctx.moveTo(px + s * 0.34, py - s * 0.5);
-    ctx.lineTo(px + s * 0.62, py - s * 0.42);
-    ctx.lineTo(px + s * 0.34, py - s * 0.33);
-    ctx.closePath();
-    ctx.fill();
 
     // armor stock = siege bar
     ctx.fillStyle = 'rgba(0,0,0,0.55)';

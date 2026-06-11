@@ -3,8 +3,7 @@
  * The same protocol serves human clients, external bots and spectators;
  * see docs/PROTOCOL.md for the prose version.
  */
-import type { Faction, Owner } from './constants';
-import type { Base, BuilderOrderKind, Pillbox, Tank, WarInfo, WarRecord } from './types';
+import type { Faction, Owner } from './constants';import type { Base, BuilderOrderKind, Pillbox, Tank, WarInfo, WarRecord } from './types';
 
 // ---------- client -> server ----------
 
@@ -99,6 +98,8 @@ export interface ShellView {
   x: number;
   y: number;
   dir: number;
+  /** who fired it ('neutral' = a hostile neutral pillbox) — drives tracer color */
+  f: Owner;
 }
 
 export type GameEvent =

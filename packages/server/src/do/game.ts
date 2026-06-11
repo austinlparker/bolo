@@ -520,7 +520,7 @@ export class GameDO implements DurableObject {
 
     const shells = world.shells
       .filter((s) => Math.hypot(s.x - vx, s.y - vy) <= PLAYER_VIEW_RADIUS)
-      .map((s) => ({ id: s.id, x: round2(s.x), y: round2(s.y), dir: round2(s.dir) }));
+      .map((s) => ({ id: s.id, x: round2(s.x), y: round2(s.y), dir: round2(s.dir), f: s.faction }));
 
     // mine intel: removals are public (the crater is right there); placements only to the owning faction
     let mines: [number, number, 0 | 1][] | undefined;

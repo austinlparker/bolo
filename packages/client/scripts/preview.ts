@@ -67,8 +67,8 @@ state.builders.push({ tankId: 1, faction: 'dawn', phase: 'working', x: cx - 2.5,
 state.builders.push({ tankId: 3, faction: 'dusk', phase: 'outbound', x: cx + 7, y: cy + 6 });
 
 state.shells = [
-  { id: 90, x: cx + 4.5, y: cy + 2, dir: 0.35 },
-  { id: 91, x: cx + 6.5, y: cy + 1.2, dir: Math.PI * 0.95 },
+  { id: 90, x: cx + 4.5, y: cy + 2, dir: 0.35, f: 'dawn' as const },
+  { id: 91, x: cx + 6.5, y: cy + 1.2, dir: Math.PI * 0.95, f: 'dusk' as const },
 ];
 state.booms.push({ x: cx + 5.5, y: cy + 3.2, kind: 'shell', at: Date.now() - 120 });
 state.booms.push({ x: cx - 1, y: cy + 5, kind: 'mine', at: Date.now() - 250 });

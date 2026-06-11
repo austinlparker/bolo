@@ -148,15 +148,23 @@ export class TileCache {
     y: number,
     h: number,
   ): void {
-    ctx.fillStyle = '#16243a';
-    ctx.fillRect(px, py, T, T);
-    // depth mottling
-    ctx.fillStyle = (h & 1) === 0 ? '#13202f' : '#192941';
-    ctx.fillRect(px + (h % 8), py + ((h >> 4) % 8), 8, 8);
-    // sparse glints
-    if (h % 7 === 0) {
-      ctx.fillStyle = 'rgba(120,160,210,0.25)';
-      ctx.fillRect(px + (h % 10), py + ((h >> 3) % 12), 5, 1);
+    const img = sprites.ready
+      ? sprites.images[h % 7 === 0 ? 'waterDeepSparkle' : 'waterDeep']
+      : undefined;
+    if (img) {
+      ctx.drawImage(img, px, py, T, T);
+      // extra depth mottling so open sea doesn't tile too visibly
+      ctx.fillStyle = (h & 1) === 0 ? 'rgba(8,14,24,0.22)' : 'rgba(30,48,76,0.16)';
+      ctx.fillRect(px + (h % 8), py + ((h >> 4) % 8), 8, 8);
+    } else {
+      ctx.fillStyle = '#16243a';
+      ctx.fillRect(px, py, T, T);
+      ctx.fillStyle = (h & 1) === 0 ? '#13202f' : '#192941';
+      ctx.fillRect(px + (h % 8), py + ((h >> 4) % 8), 8, 8);
+      if (h % 7 === 0) {
+        ctx.fillStyle = 'rgba(120,160,210,0.25)';
+        ctx.fillRect(px + (h % 10), py + ((h >> 3) % 12), 5, 1);
+      }
     }
     // foam along coastlines (any non-sea neighbor)
     const coastN = this.terrainAt(state, x, y - 1) !== Terrain.DeepSea;
@@ -171,6 +179,13 @@ export class TileCache {
   }
 
   private paintWater(ctx: CanvasRenderingContext2D, px: number, py: number, h: number, deep: boolean): void {
+    const img = sprites.ready
+      ? sprites.images[(h & 3) === 0 ? 'waterRiverCrackle' : 'waterRiver']
+      : undefined;
+    if (img) {
+      ctx.drawImage(img, px, py, T, T);
+      return;
+    }
     ctx.fillStyle = deep ? '#16243a' : '#33597f';
     ctx.fillRect(px, py, T, T);
     ctx.fillStyle = 'rgba(255,255,255,0.07)';
@@ -284,8 +299,8 @@ export class TileCache {
       ctx.fillStyle = '#44552f';
       ctx.fillRect(px, py, T, T);
     }
-    // murky pools
-    ctx.fillStyle = '#3d5c52';
+    // murky pools, in the same navy family as the recolored pack water
+    ctx.fillStyle = '#37526b';
     ctx.beginPath();
     ctx.ellipse(px + 4 + (h % 7), py + 4 + ((h >> 4) % 7), 4, 2.5, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -306,10 +321,9 @@ export class TileCache {
   }
 
   private paintCrater(ctx: CanvasRenderingContext2D, px: number, py: number, h: number, h2: number): void {
-    // scarred grass rather than a brown square: battle damage on the land
-    if (sprites.ready && sprites.images.grass1) {
-      this.paintGrass(ctx, px, py, h, h2);
-      this.wash(ctx, px, py, 0.22);
+    if (sprites.ready && sprites.images.craterBase) {
+      ctx.drawImage(sprites.images.craterBase, px, py, T, T);
+      this.wash(ctx, px, py, 0.12);
     } else {
       ctx.fillStyle = '#54432f';
       ctx.fillRect(px, py, T, T);
@@ -397,18 +411,29 @@ export class TileCache {
   }
 
   private paintBuilding(ctx: CanvasRenderingContext2D, px: number, py: number, damaged: boolean): void {
-    // deliberately procedural: walls read as fortifications, not scenery
-    // beveled top-down block
-    ctx.fillStyle = '#23262e';
-    ctx.fillRect(px, py, T, T);
-    ctx.fillStyle = damaged ? '#3a3f4a' : '#454c5b';
-    ctx.fillRect(px + 1, py + 1, T - 2, T - 2);
-    ctx.fillStyle = damaged ? '#4a505c' : '#576074';
-    ctx.fillRect(px + 1, py + 1, T - 2, 2);
-    ctx.fillRect(px + 1, py + 1, 2, T - 2);
-    ctx.fillStyle = '#1a1d24';
-    ctx.fillRect(px + T - 3, py + 2, 2, T - 3);
-    ctx.fillRect(px + 2, py + T - 3, T - 3, 2);
+    if (sprites.ready && sprites.images.wallRock) {
+      ctx.drawImage(sprites.images.wallRock, px, py, T, T);
+      if (damaged) this.wash(ctx, px, py, 0.32);
+      // bevel so walls read as built fortifications, not rocky ground
+      ctx.fillStyle = 'rgba(255,255,255,0.16)';
+      ctx.fillRect(px, py, T, 2);
+      ctx.fillRect(px, py, 2, T);
+      ctx.fillStyle = 'rgba(0,0,0,0.42)';
+      ctx.fillRect(px + T - 2, py, 2, T);
+      ctx.fillRect(px, py + T - 2, T, 2);
+    } else {
+      // procedural beveled block fallback
+      ctx.fillStyle = '#23262e';
+      ctx.fillRect(px, py, T, T);
+      ctx.fillStyle = damaged ? '#3a3f4a' : '#454c5b';
+      ctx.fillRect(px + 1, py + 1, T - 2, T - 2);
+      ctx.fillStyle = damaged ? '#4a505c' : '#576074';
+      ctx.fillRect(px + 1, py + 1, T - 2, 2);
+      ctx.fillRect(px + 1, py + 1, 2, T - 2);
+      ctx.fillStyle = '#1a1d24';
+      ctx.fillRect(px + T - 3, py + 2, 2, T - 3);
+      ctx.fillRect(px + 2, py + T - 3, T - 3, 2);
+    }
     if (damaged) {
       // cracks and a bite taken out
       ctx.strokeStyle = '#181b21';
