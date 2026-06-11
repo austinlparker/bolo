@@ -537,19 +537,21 @@ body.touch-mode #touch-ui {
   border-color: #c45050;
 }
 
-/* chat hides behind a toggle on touch devices */
+/* chat hides behind a small bottom-center toggle on touch devices */
 #chat-toggle {
   display: none;
   position: fixed;
-  left: 12px;
-  bottom: calc(216px + env(safe-area-inset-bottom, 0px));
-  width: 44px;
-  height: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
+  font-size: 16px;
   border: 1px solid var(--line);
-  background: var(--panel);
+  background: rgba(13, 16, 22, 0.55);
   z-index: 16;
   pointer-events: auto;
   cursor: pointer;
@@ -567,7 +569,7 @@ body.touch-mode #hud-chat.open {
   display: block;
   left: 10px;
   right: 10px;
-  top: 52px;
+  top: calc(46px + env(safe-area-inset-top, 0px));
   bottom: auto;
   width: auto;
   background: var(--panel);
@@ -581,17 +583,134 @@ body.touch-mode #hud-chat.open #chat-input {
   font-size: 16px; /* prevents iOS zoom-on-focus */
 }
 
-/* bigger touch targets for the tool bar, raised clear of thumbs */
+/* the desktop toolbar never shows on touch; tools live behind the ⚒ button */
 body.touch-mode #hud-tools {
-  bottom: calc(138px + env(safe-area-inset-bottom, 0px));
-  max-width: 96vw;
-  overflow-x: auto;
-  scrollbar-width: none;
+  display: none;
 }
 
-body.touch-mode #hud-tools .tool {
-  padding: 11px 13px;
+/* ---------- mobile builder button + tray ---------- */
+#builder-ui {
+  display: none;
+}
+
+body.touch-mode #builder-ui {
+  display: block;
+  pointer-events: auto;
+}
+
+#builder-btn {
+  position: fixed;
+  right: 128px;
+  bottom: calc(34px + env(safe-area-inset-bottom, 0px));
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  border: 2px solid var(--line-bright);
+  background: rgba(13, 16, 22, 0.55);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  z-index: 15;
+  touch-action: none;
+  cursor: pointer;
+}
+
+#builder-ui.open #builder-btn,
+#builder-ui.armed #builder-btn {
+  border-color: var(--dawn);
+  color: var(--dawn);
+  background: rgba(232, 163, 61, 0.14);
+}
+
+#builder-ui.armed #builder-btn {
+  animation: armed-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes armed-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(232, 163, 61, 0.45); }
+  50% { box-shadow: 0 0 0 9px rgba(232, 163, 61, 0); }
+}
+
+#builder-tray {
+  display: none;
+  position: fixed;
+  right: 14px;
+  bottom: calc(112px + env(safe-area-inset-bottom, 0px));
+  grid-template-columns: repeat(2, auto);
+  gap: 6px;
+  z-index: 16;
+}
+
+#builder-ui.open #builder-tray {
+  display: grid;
+}
+
+.tray-tool {
+  padding: 11px 14px;
+  min-width: 108px;
+  text-align: left;
+  border: 1px solid var(--line-bright);
+  background: var(--panel);
+  color: var(--text);
   font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tray-tool:active {
+  border-color: var(--dawn);
+  color: var(--dawn);
+}
+
+/* ---------- toast + death overlay ---------- */
+#toast {
+  position: fixed;
+  top: calc(44px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 86vw;
+  padding: 7px 14px;
+  background: rgba(13, 16, 22, 0.85);
+  border: 1px solid var(--line-bright);
+  font-size: 12px;
+  z-index: 25;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s;
+  text-align: center;
+}
+
+#toast.show {
+  opacity: 1;
+}
+
+#death-overlay {
+  position: fixed;
+  top: 38%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: #e85d5d;
+  font-size: 26px;
+  letter-spacing: 6px;
+  text-shadow: 2px 2px 0 #000, 0 0 26px rgba(0, 0, 0, 0.9);
+  z-index: 20;
+  pointer-events: none;
+  display: none;
+}
+
+#death-overlay small {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--dim);
+}
+
+#death-overlay.show {
+  display: block;
 }
 
 /* ---------- small screens ---------- */
@@ -661,6 +780,69 @@ body.touch-mode #hud-tools .tool {
     font-size: 36px;
     letter-spacing: 10px;
   }
+}
+
+/* ---------- touch-mode chrome: slim + translucent ---------- */
+body.touch-mode #hud-status {
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  left: calc(8px + env(safe-area-inset-left, 0px));
+  padding: 5px 9px;
+  background: rgba(13, 16, 22, 0.55);
+  border-color: rgba(42, 47, 58, 0.7);
+  box-shadow: none;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  gap: 10px;
+}
+
+body.touch-mode #hud-status .stat {
+  white-space: nowrap;
+}
+
+body.touch-mode #hud-war {
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  padding: 5px 10px;
+  font-size: 10px;
+  background: rgba(13, 16, 22, 0.55);
+  box-shadow: none;
+  max-width: 44vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.touch-mode #hud-minimap {
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  bottom: auto;
+  right: calc(8px + env(safe-area-inset-right, 0px));
+  width: 92px;
+  height: 92px;
+  opacity: 0.82;
+  pointer-events: auto;
+  transition: width 0.15s, height 0.15s;
+}
+
+body.touch-mode #hud-minimap.big {
+  width: min(60vw, 60vh);
+  height: min(60vw, 60vh);
+  opacity: 1;
+}
+
+body.touch-mode #hud-feed {
+  display: none;
+}
+
+body.touch-mode #banner {
+  top: 33%;
+  font-size: 17px;
+  letter-spacing: 3px;
+  width: 92vw;
+}
+
+body.touch-mode #banner small {
+  font-size: 11px;
 }
 
 /* the login input always stays >=16px so iOS doesn't zoom the viewport */

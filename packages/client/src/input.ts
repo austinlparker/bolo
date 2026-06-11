@@ -83,8 +83,13 @@ export class Input {
       const quick = performance.now() - downAt < 350;
       const still = Math.hypot(ev.clientX - downX, ev.clientY - downY) < 12;
       if (!quick || !still) return;
+      // on touch devices a tool must be explicitly armed first (via the ⚒
+      // button) so casual taps don't send the builder marching
+      const mobile = document.body.classList.contains('touch-mode');
+      const order = mobile ? hud.takeArmedTool() : hud.tool;
+      if (!order) return;
       const [wx, wy] = renderer.screenToWorld(ev.clientX, ev.clientY);
-      net.send({ t: 'builder', order: hud.tool, x: Math.floor(wx), y: Math.floor(wy) });
+      net.send({ t: 'builder', order, x: Math.floor(wx), y: Math.floor(wy) });
     });
   }
 }

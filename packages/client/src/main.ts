@@ -48,7 +48,7 @@ async function startPlayer(): Promise<void> {
         state.applyWelcome(msg);
         if (msg.you) {
           const controls = touch
-            ? 'stick to drive · hold ⊕ to fire · pick a tool, tap the map to send your builder'
+            ? 'stick to drive · hold ⊕ to fire · ⚒ opens build tools'
             : 'WASD drive · space fire · 1-6 builder tools · click to send builder · R recall · enter chat';
           hud.showBanner(
             `<span class="f-${msg.you.faction}">you fight for ${FACTION_NAMES[msg.you.faction]}</span><br/>` +
@@ -79,7 +79,10 @@ async function startPlayer(): Promise<void> {
           location.reload();
           return;
         }
-        if (msg.code === 'invalid_order') state.pushFeed(`builder: ${msg.msg}`);
+        if (msg.code === 'invalid_order') {
+          state.pushFeed(`builder: ${msg.msg}`);
+          if (touch) hud.showToast(`builder: ${msg.msg}`);
+        }
         break;
       case 'pong':
       case 'spectate':

@@ -56,6 +56,12 @@ export class Hud {
       <div id="chat-toggle" class="hud">💬</div>
       <canvas id="hud-minimap" class="hud" width="180" height="180"></canvas>
       <div id="banner"></div>
+      <div id="toast"></div>
+      <div id="death-overlay">⊘ DESTROYED<small></small></div>
+      <div id="builder-ui" class="hud">
+        <div id="builder-tray"></div>
+        <div id="builder-btn">⚒</div>
+      </div>
     `,
     );
     this.status = document.getElementById('hud-status')!;
@@ -88,6 +94,92 @@ export class Hud {
     const chatWrap = document.getElementById('hud-chat')!;
     const toggle = document.getElementById('chat-toggle')!;
     toggle.onclick = () => chatWrap.classList.toggle('open');
+
+    // mobile: minimap tap-toggles between small and large
+    this.minimap.addEventListener('pointerdown', () => {
+      if (document.body.classList.contains('touch-mode')) this.minimap.classList.toggle('big');
+    });
+
+    this.buildMobileBuilderUi();
+  }
+
+  // ---------- mobile builder flow ----------
+  // Tools live behind one ⚒ button: tap to open the tray, pick a tool to
+  // "arm" it, then tap the battlefield once to dispatch. No persistent
+  // toolbar eating the screen, no accidental dispatches while panning eyes.
+
+  /** tool armed for a single tap-dispatch (mobile only); null = disarmed */
+  private armedTool: BuilderOrderKind | null = null;
+
+  private buildMobileBuilderUi(): void {
+    const ui = document.getElementById('builder-ui')!;
+    const btn = document.getElementById('builder-btn')!;
+    const tray = document.getElementById('builder-tray')!;
+
+    for (const t of TOOLS) {
+      const el = document.createElement('div');
+      el.className = 'tray-tool';
+      el.innerHTML = `${t.label.slice(2)}`;
+      el.onclick = () => {
+        this.armedTool = t.kind;
+        this.tool = t.kind;
+        btn.textContent = t.label.slice(2, 4).trim();
+        ui.classList.remove('open');
+        ui.classList.add('armed');
+        this.showToast(`tap the map to send your builder — ${t.label.slice(2)}`, 0);
+      };
+      tray.appendChild(el);
+    }
+    const recall = document.createElement('div');
+    recall.className = 'tray-tool';
+    recall.textContent = '↩ recall';
+    recall.onclick = () => {
+      this.onRecall?.();
+      ui.classList.remove('open');
+      this.showToast('builder recalled', 1400);
+    };
+    tray.appendChild(recall);
+
+    btn.onclick = () => {
+      if (this.armedTool) {
+        // cancel an armed tool
+        this.disarmTool();
+        return;
+      }
+      ui.classList.toggle('open');
+    };
+  }
+
+  /** consume the armed tool for one dispatch (mobile tap flow) */
+  takeArmedTool(): BuilderOrderKind | null {
+    const t = this.armedTool;
+    if (t) this.disarmTool();
+    return t;
+  }
+
+  private disarmTool(): void {
+    this.armedTool = null;
+    const ui = document.getElementById('builder-ui')!;
+    const btn = document.getElementById('builder-btn')!;
+    ui.classList.remove('armed', 'open');
+    btn.textContent = '⚒';
+    this.hideToast();
+  }
+
+  // ---------- toast ----------
+
+  private toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  showToast(text: string, ms = 1600): void {
+    const el = document.getElementById('toast')!;
+    el.textContent = text;
+    el.classList.add('show');
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    this.toastTimer = ms > 0 ? setTimeout(() => this.hideToast(), ms) : null;
+  }
+
+  hideToast(): void {
+    document.getElementById('toast')!.classList.remove('show');
   }
 
   onRecall: (() => void) | null = null;
@@ -122,12 +214,32 @@ export class Hud {
 
   update(state: GameState): void {
     const me = state.me();
+    const mobile = document.body.classList.contains('touch-mode');
+
+    // centered death overlay (both desktop and mobile)
+    const death = document.getElementById('death-overlay')!;
+    if (me && me.armor !== undefined && !me.alive) {
+      death.classList.add('show');
+      death.querySelector('small')!.textContent = `respawning in ${me.respawnIn ?? '…'}s`;
+    } else {
+      death.classList.remove('show');
+    }
+
     if (me && me.armor !== undefined) {
-      if (!me.alive) {
+      if (mobile) {
+        // one slim translucent strip of icon+number pairs
+        const builderOut = state.builders.some((x) => x.tankId === me.id);
+        this.status.innerHTML = `
+          <span class="stat" style="color:#7fc46a">🛡${me.armor}</span>
+          <span class="stat" style="color:#e8c75d">✦${me.shells}</span>
+          <span class="stat" style="color:#e85d5d">✸${me.mines}</span>
+          <span class="stat" style="color:#4a9e55">🌲${me.trees}</span>
+          ${builderOut ? '<span class="stat">⚒…</span>' : ''}
+          ${me.carriedPill != null ? '<span class="stat">◉</span>' : ''}`;
+      } else if (!me.alive) {
         this.status.innerHTML = `
           <div class="callsign"><span class="f-${me.faction}">${escapeHtml(me.handle)}</span></div>
-          <div class="dead">⊘ DESTROYED</div>
-          <div class="dim">respawn in ${me.respawnIn ?? '…'}s</div>`;
+          <div class="dim">awaiting redeployment</div>`;
       } else {
         const meters = METERS.map(
           (m) => `
