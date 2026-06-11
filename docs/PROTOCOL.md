@@ -1,4 +1,4 @@
-# BOLO wire protocol
+# ATBOLO wire protocol
 
 JSON text frames over a WebSocket at `wss://<host>/ws`. The same protocol
 serves the web client, external bots, and spectators. Canonical message

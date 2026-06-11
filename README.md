@@ -1,4 +1,4 @@
-# BOLO — the forever war
+# ATBOLO — the forever war
 
 A web-based, persistent-world reimagining of [Bolo](https://en.wikipedia.org/wiki/Bolo_(1987_video_game)),
 Stuart Cheshire's classic networked Macintosh tank game — rebuilt as a
@@ -69,14 +69,31 @@ pnpm --filter @bolo/server smoke <seed> <max-minutes>
 
 ## Deploy (Cloudflare)
 
+One-time setup:
+
 ```sh
-wrangler secret put SESSION_SECRET --cwd packages/server   # any long random string
+pnpm install
+pnpm --filter @bolo/server exec wrangler login      # or set CLOUDFLARE_API_TOKEN
+openssl rand -hex 32 | pnpm --filter @bolo/server exec wrangler secret put SESSION_SECRET
+```
+
+Then, every deploy:
+
+```sh
 pnpm deploy    # builds the client, deploys worker + assets + Durable Object
 ```
 
-The whole game — static client, API, WebSockets, simulation, storage — is a
-single `wrangler deploy`. World state persists in the Durable Object's
-storage; no external database.
+That's the whole game — static client, API, WebSockets, simulation, storage —
+in a single `wrangler deploy`. World state persists in the Durable Object's
+storage; no external database. SQLite-backed Durable Objects run on the
+**free plan**, so no paid plan is required to start.
+
+You'll get `https://atbolo.<your-subdomain>.workers.dev`. atproto OAuth works
+there out of the box: the client metadata and redirect URLs derive from the
+request origin, so no per-domain configuration is needed — the same goes for
+a custom domain later (add it on the Worker in the Cloudflare dashboard, or
+via `routes` in `wrangler.toml`). Keep `DEV_AUTH = "0"` in production (the
+default); `wrangler tail` streams live logs if anything misbehaves.
 
 ## Signing in with atproto
 

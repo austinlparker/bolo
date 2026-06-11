@@ -54,7 +54,7 @@ export function showLogin(root: HTMLElement, initialError?: string): Promise<Cre
     overlay.className = 'overlay';
     overlay.innerHTML = `
       <div class="login-box">
-        <h1>BOLO</h1>
+        <h1>ATBOLO</h1>
         <div class="sub">the forever war · <span class="vs-dawn">DAWN</span> vs <span class="vs-dusk">DUSK</span></div>
         <label>bluesky / atproto handle</label>
         <input id="login-handle" placeholder="you.bsky.social" autocomplete="username" />

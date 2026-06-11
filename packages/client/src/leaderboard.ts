@@ -46,7 +46,7 @@ export function startLeaderboard(root: HTMLElement): void {
   root.innerHTML = `
     <div class="lb-wrap">
       <div class="lb-inner">
-        <h1>BOLO</h1>
+        <h1>ATBOLO</h1>
         <div class="lb-sub">veterans of the forever war</div>
         <div class="lb-war dim">loading…</div>
         <div class="lb-list"></div>

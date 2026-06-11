@@ -69,7 +69,7 @@ export function clientMetadata(origin: string): Record<string, unknown> {
   const { clientId, redirectUri } = clientIdsFor(origin);
   return {
     client_id: clientId,
-    client_name: 'BOLO — the forever war',
+    client_name: 'ATBOLO — the forever war',
     client_uri: origin,
     application_type: 'web',
     grant_types: ['authorization_code', 'refresh_token'],

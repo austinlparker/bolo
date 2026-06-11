@@ -29,7 +29,7 @@ export function startSpectator(root: HTMLElement): void {
 
   const panel = document.createElement('div');
   panel.className = 'spec-panel';
-  panel.innerHTML = '<h2>BOLO</h2>connecting to the front...';
+  panel.innerHTML = '<h2>ATBOLO</h2>connecting to the front...';
   root.appendChild(panel);
 
   const state = new GameState();
@@ -121,7 +121,7 @@ export function startSpectator(root: HTMLElement): void {
         )
         .join('');
       panel.innerHTML = `
-        <h2>BOLO</h2>
+        <h2>ATBOLO</h2>
         <div>${warLine(state.war)}</div>
         <div class="bar">
           <div class="dawn" style="width:${dawnPct}%"></div>
