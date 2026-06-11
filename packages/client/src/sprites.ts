@@ -38,7 +38,7 @@ const FILES = {
   barrelBase: 'tanks/tankSand_barrel1_outline.png',
   bulletBase: 'projectiles/bulletSand1.png',
   crosshairBase: 'crosshair/crosshair029.png',
-  baseStructure: 'rts-scifi/structures/scifiStructure_11.png', // RTS HQ -> capturable base
+  baseStructure: 'rts-scifi/structures/scifiStructure_07.png', // RTS domed HQ -> capturable base
 
   // Map Pack atlas (sliced via ATLAS below)
   atlas: 'mappack-atlas/mapPack_spritesheet.png',
