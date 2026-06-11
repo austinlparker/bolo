@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "pnpm --filter @bolo/client build && wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "smoke": "tsx scripts/smoke.ts"
