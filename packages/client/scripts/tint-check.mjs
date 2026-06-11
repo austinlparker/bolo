@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 globalThis.document = { createElement: () => createCanvas(300, 150) };
 const { loadSprites, sprites } = await import('/home/user/bolo/packages/client/src/sprites.ts');
 await loadSprites((url) => loadImage(url), '/home/user/bolo/packages/client/public/assets/');
-const keys = ['water','waterDeep','waterDeepSparkle','waterRiver','waterRiverCrackle','craterBase','wallRock','towerDawn','towerDusk','towerNeutral','towerHusk','castleDawn','castleDusk','castleNeutral','builderMan','tankDawn','tankDusk','bulletDawn','bulletDusk'];
+const keys = ['towerDawn','towerDusk','towerNeutral','towerHusk','baseDawn','baseDusk','baseNeutral','builderMan','tankDawn','tankDusk','bulletDawn','crosshairDawn','waterDeep','waterRiver','craterBase','wallRock'];
 const cell = 80;
 const c = createCanvas(cell*10, cell*2 + 30);
 const ctx = c.getContext('2d');

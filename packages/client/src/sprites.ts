@@ -39,6 +39,9 @@ const FILES = {
   bulletBase: 'projectiles/bulletSand1.png',
   crosshairBase: 'crosshair/crosshair029.png',
   baseStructure: 'rts-scifi/structures/scifiStructure_07.png', // RTS domed HQ -> capturable base
+  pillTurret: 'rts-scifi/structures/scifiStructure_13.png', // gun turret -> live pillbox
+  pillMount: 'rts-scifi/structures/scifiStructure_14.png', // gunless mount -> dead pillbox husk
+  builderBot: 'rts-scifi/units/scifiUnit_39.png', // worker robot with tool -> the LGM
 
   // Map Pack atlas (sliced via ATLAS below)
   atlas: 'mappack-atlas/mapPack_spritesheet.png',
@@ -72,8 +75,6 @@ const ATLAS = {
   dirt: [448, 640, 64, 64], // mapTile_084: plain dirt
   dirtMarked: [448, 320, 64, 64], // mapTile_089: textured dirt
   rock: [768, 576, 64, 64], // mapTile_015: gray rock, textured
-  tower: [832, 320, 64, 64], // mapTile_099: watchtower -> pillbox
-  man: [256, 0, 64, 64], // mapTile_136: the little green man
 } as const;
 
 type FileKey = keyof typeof FILES;
@@ -144,6 +145,8 @@ interface TintOpts {
   color?: string;
   /** 'multiply' blend: darken / colorize toward this */
   multiply?: string;
+  /** crop transparent padding so draw sizes reflect actual content */
+  trim?: boolean;
 }
 
 /** Cut a region from `src` and recolor it into a standalone canvas. */
@@ -153,22 +156,51 @@ function tinted(
   opts: TintOpts,
 ): HTMLCanvasElement {
   const [sx, sy, sw, sh] = rect ?? [0, 0, (src as HTMLImageElement).width, (src as HTMLImageElement).height];
-  const c = mkCanvas(sw, sh);
-  const ctx = c.getContext('2d')!;
+  let c = mkCanvas(sw, sh);
+  let ctx = c.getContext('2d')!;
   ctx.drawImage(src, sx, sy, sw, sh, 0, 0, sw, sh);
+
+  if (opts.trim) {
+    const data = ctx.getImageData(0, 0, sw, sh).data;
+    let minX = sw, minY = sh, maxX = -1, maxY = -1;
+    for (let y = 0; y < sh; y++) {
+      for (let x = 0; x < sw; x++) {
+        if (data[(y * sw + x) * 4 + 3] > 8) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX >= minX) {
+      const tw = maxX - minX + 1;
+      const th = maxY - minY + 1;
+      const trimmedC = mkCanvas(tw, th);
+      const tctx = trimmedC.getContext('2d')!;
+      tctx.drawImage(c, minX, minY, tw, th, 0, 0, tw, th);
+      c = trimmedC;
+      ctx = tctx;
+    }
+  }
+
+  const w = c.width;
+  const h = c.height;
+  const mask = mkCanvas(w, h);
+  mask.getContext('2d')!.drawImage(c, 0, 0);
   if (opts.color) {
     ctx.globalCompositeOperation = 'color';
     ctx.fillStyle = opts.color;
-    ctx.fillRect(0, 0, sw, sh);
+    ctx.fillRect(0, 0, w, h);
   }
   if (opts.multiply) {
     ctx.globalCompositeOperation = 'multiply';
     ctx.fillStyle = opts.multiply;
-    ctx.fillRect(0, 0, sw, sh);
+    ctx.fillRect(0, 0, w, h);
   }
   // blends paint the whole rect; restore the sprite's alpha mask
   ctx.globalCompositeOperation = 'destination-in';
-  ctx.drawImage(src, sx, sy, sw, sh, 0, 0, sw, sh);
+  ctx.drawImage(mask, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
   return c;
 }
@@ -206,16 +238,17 @@ export async function loadSprites(
   img.wallRock = tinted(atlas, ATLAS.rock, { multiply: '#8e95a4' });
 
   // --- faction structures ---
-  img.towerDawn = tinted(atlas, ATLAS.tower, { multiply: TINT.dawnLight });
-  img.towerDusk = tinted(atlas, ATLAS.tower, { multiply: TINT.duskLight });
-  img.towerNeutral = tinted(atlas, ATLAS.tower, { color: '#9aa3ad', multiply: TINT.neutralLight });
-  img.towerHusk = tinted(atlas, ATLAS.tower, { color: '#70767e', multiply: '#6d727b' });
-  img.baseDawn = tinted(img.baseStructure, null, { multiply: TINT.dawnLight });
-  img.baseDusk = tinted(img.baseStructure, null, { multiply: TINT.duskLight });
-  img.baseNeutral = tinted(img.baseStructure, null, { color: '#9aa3ad', multiply: TINT.neutralLight });
+  // pillbox: RTS gun turret, faction-tinted; the gunless mount is the husk
+  img.towerDawn = tinted(img.pillTurret, null, { multiply: TINT.dawnLight, trim: true });
+  img.towerDusk = tinted(img.pillTurret, null, { multiply: TINT.duskLight, trim: true });
+  img.towerNeutral = tinted(img.pillTurret, null, { color: '#9aa3ad', multiply: TINT.neutralLight, trim: true });
+  img.towerHusk = tinted(img.pillMount, null, { color: '#70767e', multiply: '#878c95', trim: true });
+  img.baseDawn = tinted(img.baseStructure, null, { multiply: TINT.dawnLight, trim: true });
+  img.baseDusk = tinted(img.baseStructure, null, { multiply: TINT.duskLight, trim: true });
+  img.baseNeutral = tinted(img.baseStructure, null, { color: '#9aa3ad', multiply: TINT.neutralLight, trim: true });
 
-  // --- the little green man (already green; just lift him off the atlas) ---
-  img.builderMan = img.man;
+  // --- the little green man, now a little green machine: worker robot, green-tinted ---
+  img.builderMan = tinted(img.builderBot, null, { multiply: '#9fe89b', trim: true });
 
   // --- vehicles & ordnance: one sand-colored base, faction-multiplied ---
   img.tankDawn = tinted(img.tankBase, null, { multiply: TINT.dawnLight });

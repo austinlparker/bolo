@@ -10,10 +10,11 @@ drawing until sprites load, and permanently for anything not listed):
 - **Wired, with load-time recoloring** (blend-mode tints in `src/sprites.ts` keep one
   consistent palette): grass, the full road connection set, forest trees; Map Pack water
   retargeted to BOLO navy (deep/river variants); Map Pack dirt -> craters, gray rock ->
-  walls; tower -> pillboxes (Map Pack) and RTS Sci-fi HQ -> bases, faction-tinted (dawn amber
-  / dusk violet / neutral gray / dead husk); tank+barrel+bullet from single sand bases,
-  faction-multiplied; tracers colored per faction; the little green man (mapTile_136) as the
-  builder; explosion frame sequences; joystick pad skins. Owned bases also fly a **procedural
+  walls; RTS Sci-fi gun turret (scifiStructure_13) -> pillboxes with the gunless mount
+  (scifiStructure_14) as the dead husk, and RTS Sci-fi HQ -> bases, all faction-tinted (dawn
+  amber / dusk violet / neutral gray); tank+barrel+bullet from single sand bases,
+  faction-multiplied; tracers colored per faction; the LGM is now a little green *machine* -
+  worker robot scifiUnit_39, green-tinted; explosion frame sequences; joystick pad skins. Owned bases also fly a **procedural
   waving flag** (`drawFlag` in render.ts — sine-rippled pennant, faction-colored).
 - **Still procedural**: mine markers, hp/stock bars, anger auras, shadows, coast foam and
   river banks, boat hulls, minimap blips - state overlays, not art.

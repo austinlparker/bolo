@@ -340,7 +340,12 @@ export class Renderer {
     ctx.fill();
 
     if (img) {
-      const w = s * 0.46;
+      // sprites are alpha-trimmed; keep the robot's aspect and plant his
+      // feet on the faction ring
+      const iw = (img as HTMLCanvasElement).width;
+      const ih = (img as HTMLCanvasElement).height;
+      const h = s * 0.48;
+      const w = (h * iw) / ih;
       // working: rock side to side like he's putting his back into it
       if (phase === 'working') ctx.rotate(Math.sin(now / 120) * 0.3);
       // faction band under his feet so you know whose engineer he is
@@ -349,7 +354,7 @@ export class Renderer {
       ctx.beginPath();
       ctx.ellipse(0, s * 0.18, s * 0.15, s * 0.07, 0, 0, Math.PI * 2);
       ctx.stroke();
-      ctx.drawImage(img, -w / 2, -w * 0.62, w, w);
+      ctx.drawImage(img, -w / 2, s * 0.18 - h, w, h);
     } else {
       // procedural fallback green man
       ctx.fillStyle = '#3fae49';
@@ -416,19 +421,15 @@ export class Renderer {
       ctx.beginPath();
       ctx.ellipse(px + 1.5, py + s * 0.32, s * 0.4, s * 0.18, 0, 0, Math.PI * 2);
       ctx.fill();
-      if (dead) ctx.globalAlpha = 0.8;
-      ctx.drawImage(img, px - s / 2, py - s / 2, s, s);
+      // aspect-correct draw (sprites are alpha-trimmed); the dead husk is
+      // the gunless mount sprite, which reads as "empty" on its own
+      const iw = (img as HTMLCanvasElement).width;
+      const ih = (img as HTMLCanvasElement).height;
+      const dw = s * 0.92;
+      const dh = (dw * ih) / iw;
+      if (dead) ctx.globalAlpha = 0.85;
+      ctx.drawImage(img, px - dw / 2, py - dh / 2, dw, dh);
       ctx.globalAlpha = 1;
-      if (dead) {
-        // crack across the ruin
-        ctx.strokeStyle = 'rgba(10,12,16,0.7)';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(px - s * 0.18, py - s * 0.22);
-        ctx.lineTo(px + s * 0.05, py + s * 0.05);
-        ctx.lineTo(px - s * 0.06, py + s * 0.28);
-        ctx.stroke();
-      }
     } else {
       // procedural fallback: simple bunker block
       ctx.fillStyle = dead ? '#383d45' : '#565d68';
