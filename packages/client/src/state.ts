@@ -10,6 +10,7 @@ import {
   type GameEvent,
   MAP_SIZE,
   type Pillbox,
+  type PlayerProfile,
   type ShellView,
   type StateMsg,
   type TankView,
@@ -41,6 +42,8 @@ export class GameState {
   shells: ShellView[] = [];
   war: WarInfo | null = null;
   you: WelcomeMsg['you'] = null;
+  /** your persistent career stats, from welcome */
+  profile: PlayerProfile | null = null;
   tick = 0;
   booms: Boom[] = [];
   feed: string[] = [];
@@ -70,6 +73,7 @@ export class GameState {
     this.pills = msg.pills;
     this.war = msg.war;
     this.you = msg.you;
+    this.profile = msg.profile ?? null;
     this.tick = msg.tick;
     this.tanks.clear();
     this.shells = [];

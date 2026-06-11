@@ -3,7 +3,8 @@
  * The same protocol serves human clients, external bots and spectators;
  * see docs/PROTOCOL.md for the prose version.
  */
-import type { EmoteKind, Faction, Owner } from './constants';import type { Base, BuilderOrderKind, Pillbox, Tank, WarInfo, WarRecord } from './types';
+import type { EmoteKind, Faction, Owner } from './constants';
+import type { Base, BuilderOrderKind, Pillbox, PlayerProfile, Tank, WarInfo, WarRecord } from './types';
 
 // ---------- client -> server ----------
 
@@ -90,6 +91,9 @@ export interface TankView {
   carriedPill?: number | null;
   /** seconds until respawn; only on YOUR tank while dead */
   respawnIn?: number;
+  /** this-life session stats; only on YOUR tank (for live rank progress) */
+  kills?: number;
+  caps?: number;
 }
 
 export interface BuilderView {
@@ -120,6 +124,8 @@ export type GameEvent =
 export interface WelcomeMsg {
   t: 'welcome';
   you: { did: string; handle: string; faction: Faction; tankId: number } | null; // null for spectators
+  /** your persistent career stats (players only) */
+  profile?: PlayerProfile;
   war: WarInfo;
   map: { w: number; h: number; terrain: string /* base64 Uint8Array */ };
   /** mine tiles visible to your faction (empty for spectators) */

@@ -9,6 +9,7 @@ import {
   type WarInfo,
 } from '@bolo/shared';
 import { FACTION_COLORS } from './render';
+import { rankFor, rankImgUrl, ratingOf } from './ranks';
 import { EMOTE_FILES } from './sprites';
 import type { GameState } from './state';
 import { TILE_PX, TileCache } from './tiles';
@@ -252,6 +253,15 @@ export class Hud {
     const me = state.me();
     const mobile = document.body.classList.contains('touch-mode');
 
+    // live career rating: persistent profile + what you've earned this session
+    const liveRating =
+      ratingOf({
+        kills: (state.profile?.kills ?? 0) + (me?.kills ?? 0),
+        caps: (state.profile?.caps ?? 0) + (me?.caps ?? 0),
+      });
+    const rank = rankFor(liveRating);
+    const rankChip = `<img class="rank-chip" src="${rankImgUrl(rank)}" title="${rank.name} · ${liveRating} rating" alt="${rank.name}" />`;
+
     // centered death overlay (both desktop and mobile)
     const death = document.getElementById('death-overlay')!;
     if (me && me.armor !== undefined && !me.alive) {
@@ -266,6 +276,7 @@ export class Hud {
         // one slim translucent strip of icon+number pairs
         const builderOut = state.builders.some((x) => x.tankId === me.id);
         this.status.innerHTML = `
+          ${rankChip}
           <span class="stat" style="color:#7fc46a">🛡${me.armor}</span>
           <span class="stat" style="color:#e8c75d">✦${me.shells}</span>
           <span class="stat" style="color:#e85d5d">✸${me.mines}</span>
@@ -274,7 +285,7 @@ export class Hud {
           ${me.carriedPill != null ? '<span class="stat">◉</span>' : ''}`;
       } else if (!me.alive) {
         this.status.innerHTML = `
-          <div class="callsign"><span class="f-${me.faction}">${escapeHtml(me.handle)}</span></div>
+          <div class="callsign">${rankChip}<span class="f-${me.faction}">${escapeHtml(me.handle)}</span></div>
           <div class="dim">awaiting redeployment</div>`;
       } else {
         const meters = METERS.map(
@@ -288,8 +299,8 @@ export class Hud {
           ? `builder: ${builderPhase}`
           : 'builder: in tank';
         this.status.innerHTML = `
-          <div class="callsign"><span class="f-${me.faction}">${escapeHtml(me.handle)}</span>
-            <span class="dim">· ${FACTION_NAMES[me.faction]}</span></div>
+          <div class="callsign">${rankChip}<span class="f-${me.faction}">${escapeHtml(me.handle)}</span>
+            <span class="dim">· ${FACTION_NAMES[me.faction]} · ${rank.name}</span></div>
           ${meters}
           <div class="dim">${builderLine}${me.carriedPill != null ? ' · ◉ carrying pillbox' : ''}</div>`;
       }

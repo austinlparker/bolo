@@ -501,6 +501,7 @@ export class GameDO implements DurableObject {
         session.role === 'player' && session.did && session.handle && faction && session.tankId !== undefined
           ? { did: session.did, handle: session.handle, faction, tankId: session.tankId }
           : null,
+      profile: session.did ? this.profiles.get(session.did) : undefined,
       war: world.warInfo(this.phase, this.nextWarAt),
       map: { w: MAP_SIZE, h: MAP_SIZE, terrain: bytesToBase64(world.terrain) },
       mines: visibleMines,
@@ -557,6 +558,8 @@ export class GameDO implements DurableObject {
         if (!tank.alive) {
           view.respawnIn = Math.max(0, Math.ceil((tank.respawnTick - world.tick) / TICK_HZ));
         }
+        view.kills = tank.kills;
+        view.caps = tank.caps;
       }
       tanks.push(view);
       const b = tank.builder;
