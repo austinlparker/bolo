@@ -38,6 +38,7 @@ const FILES = {
   barrelBase: 'tanks/tankSand_barrel1_outline.png',
   bulletBase: 'projectiles/bulletSand1.png',
   crosshairBase: 'crosshair/crosshair029.png',
+  baseStructure: 'rts-scifi/structures/scifiStructure_11.png', // RTS HQ -> capturable base
 
   // Map Pack atlas (sliced via ATLAS below)
   atlas: 'mappack-atlas/mapPack_spritesheet.png',
@@ -72,7 +73,6 @@ const ATLAS = {
   dirtMarked: [448, 320, 64, 64], // mapTile_089: textured dirt
   rock: [768, 576, 64, 64], // mapTile_015: gray rock, textured
   tower: [832, 320, 64, 64], // mapTile_099: watchtower -> pillbox
-  castle: [384, 512, 64, 64], // mapTile_100: castle -> base
   man: [256, 0, 64, 64], // mapTile_136: the little green man
 } as const;
 
@@ -91,9 +91,9 @@ type DerivedKey =
   | 'towerDusk'
   | 'towerNeutral'
   | 'towerHusk'
-  | 'castleDawn'
-  | 'castleDusk'
-  | 'castleNeutral'
+  | 'baseDawn'
+  | 'baseDusk'
+  | 'baseNeutral'
   | 'builderMan'
   | 'tankDawn'
   | 'tankDusk'
@@ -210,9 +210,9 @@ export async function loadSprites(
   img.towerDusk = tinted(atlas, ATLAS.tower, { multiply: TINT.duskLight });
   img.towerNeutral = tinted(atlas, ATLAS.tower, { color: '#9aa3ad', multiply: TINT.neutralLight });
   img.towerHusk = tinted(atlas, ATLAS.tower, { color: '#70767e', multiply: '#6d727b' });
-  img.castleDawn = tinted(atlas, ATLAS.castle, { multiply: TINT.dawnLight });
-  img.castleDusk = tinted(atlas, ATLAS.castle, { multiply: TINT.duskLight });
-  img.castleNeutral = tinted(atlas, ATLAS.castle, { color: '#9aa3ad', multiply: TINT.neutralLight });
+  img.baseDawn = tinted(img.baseStructure, null, { multiply: TINT.dawnLight });
+  img.baseDusk = tinted(img.baseStructure, null, { multiply: TINT.duskLight });
+  img.baseNeutral = tinted(img.baseStructure, null, { color: '#9aa3ad', multiply: TINT.neutralLight });
 
   // --- the little green man (already green; just lift him off the atlas) ---
   img.builderMan = img.man;

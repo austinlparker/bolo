@@ -10,10 +10,11 @@ drawing until sprites load, and permanently for anything not listed):
 - **Wired, with load-time recoloring** (blend-mode tints in `src/sprites.ts` keep one
   consistent palette): grass, the full road connection set, forest trees; Map Pack water
   retargeted to BOLO navy (deep/river variants); Map Pack dirt -> craters, gray rock ->
-  walls; tower -> pillboxes and castle -> bases, faction-tinted (dawn amber / dusk violet /
-  neutral gray / dead husk); tank+barrel+bullet from single sand bases, faction-multiplied;
-  tracers colored per faction; the little green man (mapTile_136) as the builder;
-  explosion frame sequences; joystick pad skins.
+  walls; tower -> pillboxes (Map Pack) and RTS Sci-fi HQ -> bases, faction-tinted (dawn amber
+  / dusk violet / neutral gray / dead husk); tank+barrel+bullet from single sand bases,
+  faction-multiplied; tracers colored per faction; the little green man (mapTile_136) as the
+  builder; explosion frame sequences; joystick pad skins. Owned bases also fly a **procedural
+  waving flag** (`drawFlag` in render.ts — sine-rippled pennant, faction-colored).
 - **Still procedural**: mine markers, hp/stock bars, anger auras, shadows, coast foam and
   river banks, boat hulls, minimap blips - state overlays, not art.
 - **UI chrome**: buttons across login/HUD/tray/spectator are 9-sliced UI Pack sprites
@@ -45,6 +46,7 @@ the decent thing to do.
 | `patterns/` | Pattern Pack | Seamless B/W tileable patterns (stripes, chevrons, bricks, dots, hearts…) for menu/HUD backgrounds or faction texturing. `patternPack_tilesheet.png` is the full contact sheet; `pattern_NN.png` are a curated sample — recolor as needed. |
 | `ranks/` | Ranks Pack | Full **Gold** insignia ladder (`rank000–077`: chevrons, bars, stars) for player progression / leaderboard tiers. Bronze/Silver/Black variants also exist in the source pack. |
 | `emotes/` | Emote Pack | Full **Style 1** emote set (anger, alert, heart, cash, cloud, sleep…) for chat reactions / status bubbles over tanks. 8 vector styles + pixel variants in the source pack. |
+| `rts-scifi/` | RTS Sci-fi | `structures/scifiStructure_11` → **Base** (HQ), faction-tinted, replacing the Map Pack castle. Other structures (turrets/factories) + a 48-sprite **unit** set in blue/orange/green/gray are candidates for faction infantry / alt pillboxes. `scifi_tilesheet.png` is the contact sheet. |
 
 ## Notes
 

@@ -108,7 +108,7 @@ export class Renderer {
 
     for (const b of state.bases) {
       const [px, py] = toScreen(b.x + 0.5, b.y + 0.5);
-      if (onScreen(px, py)) this.drawBase(px, py, b.owner, b.armorStock);
+      if (onScreen(px, py)) this.drawBase(px, py, b.owner, b.armorStock, now);
     }
 
     for (const p of state.pills) {
@@ -448,13 +448,13 @@ export class Renderer {
     }
   }
 
-  /** Castle sprite, faction-tinted, with the armor-stock siege bar. */
-  private drawBase(px: number, py: number, owner: Faction | 'neutral', armorStock: number): void {
+  /** RTS HQ sprite, faction-tinted, flying a waving faction flag, with the armor-stock siege bar. */
+  private drawBase(px: number, py: number, owner: Faction | 'neutral', armorStock: number, now: number): void {
     const ctx = this.ctx;
     const s = this.scale * 1.25;
     const c = FACTION_COLORS[owner];
     const img = sprites.ready
-      ? sprites.images[owner === 'dawn' ? 'castleDawn' : owner === 'dusk' ? 'castleDusk' : 'castleNeutral']
+      ? sprites.images[owner === 'dawn' ? 'baseDawn' : owner === 'dusk' ? 'baseDusk' : 'baseNeutral']
       : undefined;
 
     if (img) {
@@ -476,11 +476,80 @@ export class Renderer {
       ctx.fill();
     }
 
+    // an owned base flies its colors; a neutral one stands bare
+    if (owner !== 'neutral') {
+      this.drawFlag(px + s * 0.04, py - s * 0.18, c, FACTION_DARK[owner], now);
+    }
+
     // armor stock = siege bar
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(px - s / 2, py + s / 2 + 3, s, 3);
     ctx.fillStyle = c;
     ctx.fillRect(px - s / 2, py + s / 2 + 3, (s * armorStock) / BASE_MAX_ARMOR_STOCK, 3);
+  }
+
+  /**
+   * A pennant on a pole that ripples in the wind. The cloth is a filled strip
+   * whose every column is displaced by a traveling sine wave; amplitude grows
+   * toward the free (fly) end and stays pinned at the hoist, so it reads as
+   * cloth catching wind rather than a rigid sheet sliding around.
+   */
+  private drawFlag(footX: number, footY: number, color: string, dark: string, now: number): void {
+    const ctx = this.ctx;
+    const s = this.scale;
+    const poleH = s * 0.52;
+    const topY = footY - poleH;
+
+    // pole
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#b9bfca';
+    ctx.lineWidth = Math.max(1.5, s * 0.06);
+    ctx.beginPath();
+    ctx.moveTo(footX, footY);
+    ctx.lineTo(footX, topY);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    // finial knob
+    ctx.fillStyle = '#e6ebf2';
+    ctx.beginPath();
+    ctx.arc(footX, topY, Math.max(1.4, s * 0.05), 0, Math.PI * 2);
+    ctx.fill();
+
+    // cloth flies to +x from just under the finial
+    const fw = s * 0.52;
+    const fh = s * 0.24;
+    const top = topY + s * 0.03;
+    const seg = 10;
+    const phase = now / 170;
+    const wave = (t: number) => Math.sin(t * 3.2 - phase) * (s * 0.07) * t;
+    const billow = (t: number) => Math.cos(t * 3.2 - phase) * (s * 0.02) * t;
+    const strip = (yOff: number) => {
+      ctx.beginPath();
+      for (let i = 0; i <= seg; i++) {
+        const t = i / seg;
+        const x = footX + t * fw + billow(t);
+        const y = top + yOff + wave(t);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      for (let i = seg; i >= 0; i--) {
+        const t = i / seg;
+        const x = footX + t * fw + billow(t);
+        const y = top + fh + wave(t);
+        ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+    };
+
+    strip(0);
+    ctx.fillStyle = color;
+    ctx.fill();
+    // lower fold in shadow for a bit of depth
+    strip(fh * 0.55);
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = dark;
+    ctx.fill();
+    ctx.globalAlpha = 1;
   }
 
   private drawMine(px: number, py: number, now: number): void {
