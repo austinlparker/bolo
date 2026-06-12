@@ -1181,8 +1181,9 @@ body.touch-mode #banner small {
     radial-gradient(circle at 35% 35%, #ff9a6a, #e04a2a);
 }
 
-/* ---------- help overlay ---------- */
-#help-overlay {
+/* ---------- help + bulletins overlays ---------- */
+#help-overlay,
+#notes-overlay {
   position: fixed;
   inset: 0;
   z-index: 40;
@@ -1195,8 +1196,102 @@ body.touch-mode #banner small {
   cursor: pointer;
 }
 
-#help-overlay.show {
+#help-overlay.show,
+#notes-overlay.show {
   display: flex;
+}
+
+/* ---------- war bulletins ---------- */
+#notes-body {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.note-entry h3 {
+  margin: 0 0 2px;
+  font-size: 14px;
+  letter-spacing: 1.5px;
+  color: var(--dawn);
+}
+
+.note-entry + .note-entry {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.note-date {
+  font-size: 11px;
+  letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+
+.note-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.note-items li {
+  padding-left: 16px;
+  position: relative;
+  margin-bottom: 5px;
+}
+
+.note-items li::before {
+  content: '▸';
+  position: absolute;
+  left: 0;
+  color: var(--dim);
+}
+
+.note-credits {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  background: rgba(232, 163, 61, 0.06);
+  padding: 10px 12px;
+}
+
+.note-credits-head {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--dawn);
+  margin-bottom: 6px;
+}
+
+.note-credit {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.note-credit a {
+  color: var(--dawn);
+}
+
+.notes-page .note-entry {
+  text-align: left;
+  margin-top: 18px;
+}
+
+/* unread dot on the 📜 buttons until the latest bulletin is opened */
+#tool-notes,
+#tm-notes {
+  position: relative;
+}
+
+#tool-notes.unread::after,
+#tm-notes.unread::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e85d5d;
+  box-shadow: 0 0 6px rgba(232, 93, 93, 0.9);
 }
 
 .help-box {

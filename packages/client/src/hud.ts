@@ -10,6 +10,7 @@ import {
   type WarInfo,
 } from '@bolo/shared';
 import { MiniMapCache } from './minimap';
+import { bulletinsHtml, hasUnseenBulletins, markBulletinsSeen } from './notes';
 import { FACTION_COLORS } from './render';
 import { rankFor, rankImgUrl, ratingOf } from './ranks';
 import { EMOTE_FILES } from './sprites';
@@ -69,6 +70,7 @@ export class Hud {
       <div id="chat-toggle" class="hud kbtn kbtn-round">💬</div>
       <div id="touch-menu" class="hud">
         <div id="tm-help" class="kbtn" title="field manual">?</div>
+        <div id="tm-notes" class="kbtn" title="war bulletins">📜</div>
         <a id="tm-board" class="kbtn" href="/leaderboard" title="career leaderboard">🏆</a>
         <div id="tm-leave" class="kbtn" title="leave the war">⏏</div>
       </div>
@@ -126,6 +128,13 @@ export class Hud {
           <div class="help-foot">tools cost trees — chop forests with the harvest tool · hold the line, commander</div>
         </div>
       </div>
+      <div id="notes-overlay">
+        <div class="help-box kpanel">
+          <h2>WAR BULLETINS</h2>
+          <div class="help-sub"><span class="ht-no">press <kbd>N</kbd> or <kbd>esc</kbd> to close</span><span class="ht-yes">tap outside to close</span></div>
+          <div id="notes-body"></div>
+        </div>
+      </div>
     `,
     );
     this.status = document.getElementById('hud-status')!;
@@ -170,6 +179,15 @@ export class Hud {
     help.onclick = () => this.toggleHelp();
     this.toolsEl.appendChild(help);
 
+    // war bulletins: patch notes + field commendations (N)
+    const notes = document.createElement('div');
+    notes.className = 'tool kbtn';
+    notes.id = 'tool-notes';
+    notes.textContent = '📜 news';
+    notes.title = 'war bulletins — patch notes (N)';
+    notes.onclick = () => this.toggleNotes();
+    this.toolsEl.appendChild(notes);
+
     // career leaderboard (the touch menu links it on mobile)
     const board = document.createElement('a');
     board.className = 'tool kbtn';
@@ -192,9 +210,16 @@ export class Hud {
     // help / leaderboard / leave need their own affordances (playtest:
     // "there's no help button on tablet", "leave button is also absent")
     document.getElementById('tm-help')!.onclick = () => this.toggleHelp();
+    document.getElementById('tm-notes')!.onclick = () => this.toggleNotes();
     document.getElementById('tm-leave')!.onclick = () => {
       location.href = '/map';
     };
+
+    const notesOverlay = document.getElementById('notes-overlay')!;
+    notesOverlay.onclick = (ev) => {
+      if (ev.target === notesOverlay) this.toggleNotes(false);
+    };
+    this.syncNotesBadge();
     const overlay = document.getElementById('help-overlay')!;
     overlay.onclick = (ev) => {
       if (ev.target === overlay) this.toggleHelp(false);
@@ -325,6 +350,29 @@ export class Hud {
 
   helpOpen(): boolean {
     return document.getElementById('help-overlay')!.classList.contains('show');
+  }
+
+  // ---------- war bulletins ----------
+
+  toggleNotes(force?: boolean): void {
+    const overlay = document.getElementById('notes-overlay')!;
+    const open = overlay.classList.toggle('show', force);
+    if (open) {
+      document.getElementById('notes-body')!.innerHTML = bulletinsHtml();
+      markBulletinsSeen();
+      this.syncNotesBadge();
+    }
+  }
+
+  notesOpen(): boolean {
+    return document.getElementById('notes-overlay')!.classList.contains('show');
+  }
+
+  /** unread dot on the 📜 buttons until the latest bulletin is opened */
+  private syncNotesBadge(): void {
+    const unseen = hasUnseenBulletins();
+    document.getElementById('tool-notes')?.classList.toggle('unread', unseen);
+    document.getElementById('tm-notes')?.classList.toggle('unread', unseen);
   }
 
   // ---------- toast ----------

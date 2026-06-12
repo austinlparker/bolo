@@ -75,7 +75,7 @@ export function showLogin(root: HTMLElement, initialError?: string): Promise<Cre
         <button id="login-go" class="kbtn kbtn-primary">ENLIST WITH BLUESKY</button>
         ${devButton}
         <div class="error" id="login-err"></div>
-        <div class="links"><a href="/map">→ war map</a> · <a href="/leaderboard">→ leaderboard</a></div>
+        <div class="links"><a href="/map">→ war map</a> · <a href="/leaderboard">→ leaderboard</a> · <a href="/notes">→ bulletins</a></div>
       </div>
     `;
     root.appendChild(overlay);

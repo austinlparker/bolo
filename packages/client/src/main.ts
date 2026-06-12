@@ -11,6 +11,7 @@ import {
   type Credentials,
 } from './login';
 import { Net } from './net';
+import { hasUnseenBulletins, startNotes } from './notes';
 import { Renderer } from './render';
 import { Sound } from './sound';
 import { startSpectator } from './spectator';
@@ -24,6 +25,8 @@ if (location.pathname.startsWith('/map')) {
   void startSpectator(root);
 } else if (location.pathname.startsWith('/leaderboard')) {
   startLeaderboard(root);
+} else if (location.pathname.startsWith('/notes')) {
+  startNotes(root);
 } else {
   void startPlayer();
 }
@@ -108,6 +111,12 @@ async function startPlayer(): Promise<void> {
               `<small>${controls}</small>`,
             7000,
           );
+          // nudge once the welcome banner has had its say
+          if (hasUnseenBulletins()) {
+            setTimeout(() => {
+              if (hasUnseenBulletins()) hud.showToast('📜 new war bulletin — patch notes & commendations', 5000);
+            }, 7500);
+          }
         }
         break;
       case 'state': {
