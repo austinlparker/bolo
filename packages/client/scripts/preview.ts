@@ -139,7 +139,7 @@ console.log('wrote /tmp/bolo-preview-desktop.png');
   const zoom = createCanvas(9 * TP * 8, 5 * TP * 8);
   const zctx = zoom.getContext('2d');
   zctx.imageSmoothingEnabled = false;
-  zctx.drawImage(tcache.canvas as any, 9 * TP, 9 * TP, 9 * TP, 5 * TP, 0, 0, zoom.width, zoom.height);
+  tcache.drawTo(zctx as any, 9 * TP, 9 * TP, 9 * TP, 5 * TP, 0, 0, zoom.width, zoom.height);
   writeFileSync('/tmp/bolo-preview-tiles.png', zoom.toBuffer('image/png'));
   console.log('wrote /tmp/bolo-preview-tiles.png');
 }
@@ -153,6 +153,6 @@ const { TileCache, TILE_PX } = await import('../src/tiles');
 const cache = new TileCache();
 cache.sync(state2 as any);
 octx.imageSmoothingEnabled = true;
-octx.drawImage(cache.canvas as any, 0, 0, MAP_SIZE * TILE_PX, MAP_SIZE * TILE_PX, 0, 0, 1024, 1024);
+cache.drawTo(octx as any, 0, 0, MAP_SIZE * TILE_PX, MAP_SIZE * TILE_PX, 0, 0, 1024, 1024);
 writeFileSync('/tmp/bolo-preview-island.png', over.toBuffer('image/png'));
 console.log('wrote /tmp/bolo-preview-island.png');
