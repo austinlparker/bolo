@@ -104,7 +104,7 @@ export class Renderer {
     const sx = this.camX * TILE_PX - (w / 2) * (TILE_PX / this.scale);
     const sy = this.camY * TILE_PX - (h / 2) * (TILE_PX / this.scale);
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(this.tiles.canvas, sx, sy, w * (TILE_PX / this.scale), h * (TILE_PX / this.scale), 0, 0, w, h);
+    this.tiles.drawTo(ctx, sx, sy, w * (TILE_PX / this.scale), h * (TILE_PX / this.scale), 0, 0, w, h);
 
     const toScreen = (wx: number, wy: number): [number, number] => [
       w / 2 + (wx - this.camX) * this.scale,

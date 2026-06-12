@@ -101,7 +101,7 @@ export async function startSpectator(root: HTMLElement): Promise<void> {
     const ox = (w - size) / 2;
     const oy = (h - size) / 2;
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(tiles.canvas, 0, 0, MAP_SIZE * TILE_PX, MAP_SIZE * TILE_PX, ox, oy, size, size);
+    tiles.drawTo(ctx, 0, 0, MAP_SIZE * TILE_PX, MAP_SIZE * TILE_PX, ox, oy, size, size);
     const k = size / MAP_SIZE;
 
     for (const b of state.bases) {

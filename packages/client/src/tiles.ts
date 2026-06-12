@@ -40,19 +40,78 @@ export const TILE_PX = 16;
 
 const T = TILE_PX;
 
+// The tilemap is split into a grid of chunk canvases instead of one
+// 4096x4096 canvas. A single max-size canvas sat exactly at iOS Safari's
+// per-canvas limit, and under memory pressure Safari silently purges its
+// backing store — players reported the battlefield going black while
+// sprites kept drawing. 1024x1024 chunks are individually cheap to
+// allocate, restore, and (mostly) skip when off-screen.
+const CHUNK_TILES = 64;
+const CHUNK_PX = CHUNK_TILES * T; // 1024
+const CHUNKS = MAP_SIZE / CHUNK_TILES; // 4 per axis
+/** trees/shadows overpaint their tile by a few px; bleed into neighbors */
+const BLEED = 10;
+
 export class TileCache {
-  canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
+  private chunks: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D }[] = [];
   /** per-consumer cursors into GameState's change tracking, so several
-   * caches (main view, minimap) can sync off the same state independently */
+   * caches (main view, /map spectator) can sync off the same state independently */
   private seenVersion = -1;
   private seenIndex = 0;
 
   constructor() {
-    this.canvas = document.createElement('canvas');
-    this.canvas.width = MAP_SIZE * T;
-    this.canvas.height = MAP_SIZE * T;
-    this.ctx = this.canvas.getContext('2d')!;
+    for (let i = 0; i < CHUNKS * CHUNKS; i++) {
+      const canvas = document.createElement('canvas');
+      canvas.width = CHUNK_PX;
+      canvas.height = CHUNK_PX;
+      this.chunks.push({ canvas, ctx: canvas.getContext('2d')! });
+    }
+  }
+
+  /**
+   * Draw the source rect (in tilemap pixels) into `ctx` at the dest rect,
+   * compositing whichever chunks it intersects. Replaces the old single
+   * drawImage(cache.canvas, ...) call sites.
+   */
+  drawTo(
+    ctx: CanvasRenderingContext2D,
+    sx: number,
+    sy: number,
+    sw: number,
+    sh: number,
+    dx: number,
+    dy: number,
+    dw: number,
+    dh: number,
+  ): void {
+    const kx = dw / sw;
+    const ky = dh / sh;
+    const c0x = Math.max(0, Math.floor(sx / CHUNK_PX));
+    const c1x = Math.min(CHUNKS - 1, Math.floor((sx + sw) / CHUNK_PX));
+    const c0y = Math.max(0, Math.floor(sy / CHUNK_PX));
+    const c1y = Math.min(CHUNKS - 1, Math.floor((sy + sh) / CHUNK_PX));
+    for (let cy = c0y; cy <= c1y; cy++) {
+      for (let cx = c0x; cx <= c1x; cx++) {
+        const ox = cx * CHUNK_PX;
+        const oy = cy * CHUNK_PX;
+        const ix0 = Math.max(sx, ox);
+        const iy0 = Math.max(sy, oy);
+        const ix1 = Math.min(sx + sw, ox + CHUNK_PX);
+        const iy1 = Math.min(sy + sh, oy + CHUNK_PX);
+        if (ix1 <= ix0 || iy1 <= iy0) continue;
+        ctx.drawImage(
+          this.chunks[cy * CHUNKS + cx].canvas,
+          ix0 - ox,
+          iy0 - oy,
+          ix1 - ix0,
+          iy1 - iy0,
+          dx + (ix0 - sx) * kx,
+          dy + (iy0 - sy) * ky,
+          (ix1 - ix0) * kx,
+          (iy1 - iy0) * ky,
+        );
+      }
+    }
   }
 
   sync(state: GameState): void {
@@ -87,9 +146,34 @@ export class TileCache {
     return state.terrain[y * MAP_SIZE + x] as Terrain;
   }
 
+  /**
+   * Paint a tile into every chunk its inflated rect touches. Painters draw
+   * in absolute tilemap coordinates; each chunk ctx is translated so the
+   * overflow (tree canopies, shadows) lands in the neighboring chunk too,
+   * matching the old shared-canvas bleed. Repaints always include
+   * neighbors (see sync), so overwritten bleed is restored the same way
+   * it was on one canvas.
+   */
   private paintTile(state: GameState, x: number, y: number): void {
+    const px = x * T;
+    const py = y * T;
+    const c0x = Math.max(0, Math.floor((px - BLEED) / CHUNK_PX));
+    const c1x = Math.min(CHUNKS - 1, Math.floor((px + T + BLEED) / CHUNK_PX));
+    const c0y = Math.max(0, Math.floor((py - BLEED) / CHUNK_PX));
+    const c1y = Math.min(CHUNKS - 1, Math.floor((py + T + BLEED) / CHUNK_PX));
+    for (let cy = c0y; cy <= c1y; cy++) {
+      for (let cx = c0x; cx <= c1x; cx++) {
+        const { ctx } = this.chunks[cy * CHUNKS + cx];
+        ctx.save();
+        ctx.translate(-cx * CHUNK_PX, -cy * CHUNK_PX);
+        this.paintTileInto(state, ctx, x, y);
+        ctx.restore();
+      }
+    }
+  }
+
+  private paintTileInto(state: GameState, ctx: CanvasRenderingContext2D, x: number, y: number): void {
     const t = this.terrainAt(state, x, y);
-    const ctx = this.ctx;
     const px = x * T;
     const py = y * T;
     const h = hash32(x, y);
