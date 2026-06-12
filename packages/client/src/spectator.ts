@@ -20,9 +20,13 @@ export async function startSpectator(root: HTMLElement): Promise<void> {
   canvas.className = 'game';
   root.appendChild(canvas);
   const ctx = canvas.getContext('2d')!;
+  // spectator data only changes at SPECTATOR_HZ (1Hz); repaint on new frames
+  // instead of burning a full-screen smoothed blit every animation frame
+  let dirty = true;
   const fit = () => {
     canvas.width = innerWidth;
     canvas.height = innerHeight;
+    dirty = true;
   };
   addEventListener('resize', fit);
   fit();
@@ -78,6 +82,7 @@ export async function startSpectator(root: HTMLElement): Promise<void> {
       } else if (msg.t === 'war_over') {
         history.unshift(msg.record);
       }
+      dirty = true;
     },
     () => ({ t: 'hello', role: 'spectator' }),
   );
@@ -85,6 +90,8 @@ export async function startSpectator(root: HTMLElement): Promise<void> {
 
   function draw(): void {
     requestAnimationFrame(draw);
+    if (!dirty) return;
+    dirty = false;
     const { width: w, height: h } = canvas;
     ctx.fillStyle = '#07080c';
     ctx.fillRect(0, 0, w, h);

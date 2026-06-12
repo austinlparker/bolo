@@ -8,11 +8,11 @@ import {
   MAP_SIZE,
   type WarInfo,
 } from '@bolo/shared';
+import { MiniMapCache } from './minimap';
 import { FACTION_COLORS } from './render';
 import { rankFor, rankImgUrl, ratingOf } from './ranks';
 import { EMOTE_FILES } from './sprites';
 import type { GameState } from './state';
-import { TILE_PX, TileCache } from './tiles';
 
 export const TOOLS: { key: string; kind: BuilderOrderKind; label: string; tip: string }[] = [
   { key: '1', kind: 'harvest', label: '1 ⚒ chop', tip: 'fell a forest tile (+4 trees)' },
@@ -40,9 +40,13 @@ export class Hud {
   chatInput: HTMLInputElement;
   private minimap: HTMLCanvasElement;
   private banner: HTMLElement;
-  private miniTiles = new TileCache();
+  private miniTiles = new MiniMapCache();
   tool: BuilderOrderKind = 'harvest';
   private bannerTimer: ReturnType<typeof setTimeout> | null = null;
+  /** last frame the HUD actually repainted (see update's 5Hz cap) */
+  private lastUpdateAt = 0;
+  /** last innerHTML written per panel, to skip no-op DOM rebuilds */
+  private htmlCache = new Map<HTMLElement, string>();
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -318,7 +322,21 @@ export class Hud {
     this.chatLog.scrollTop = this.chatLog.scrollHeight;
   }
 
+  /** Skip innerHTML assignment when the content hasn't changed. */
+  private setHtml(el: HTMLElement, html: string): void {
+    if (this.htmlCache.get(el) === html) return;
+    this.htmlCache.set(el, html);
+    el.innerHTML = html;
+  }
+
   update(state: GameState): void {
+    // called every animation frame, but repaints at 5Hz: per-frame innerHTML
+    // rebuilds + the minimap blit were a real cost on mobile GPUs, and
+    // nothing here changes faster than the 10Hz server tick anyway
+    const now = performance.now();
+    if (now - this.lastUpdateAt < 200) return;
+    this.lastUpdateAt = now;
+
     const me = state.me();
     const mobile = document.body.classList.contains('touch-mode');
 
@@ -344,18 +362,18 @@ export class Hud {
       if (mobile) {
         // one slim translucent strip of icon+number pairs
         const builderOut = state.builders.some((x) => x.tankId === me.id);
-        this.status.innerHTML = `
+        this.setHtml(this.status, `
           ${rankChip}
           <span class="stat" style="color:#7fc46a">🛡${me.armor}</span>
           <span class="stat" style="color:#e8c75d">✦${me.shells}</span>
           <span class="stat" style="color:#e85d5d">✸${me.mines}</span>
           <span class="stat" style="color:#4a9e55">🌲${me.trees}</span>
           ${builderOut ? '<span class="stat">⚒…</span>' : ''}
-          ${me.carriedPill != null ? '<span class="stat">◉</span>' : ''}`;
+          ${me.carriedPill != null ? '<span class="stat">◉</span>' : ''}`);
       } else if (!me.alive) {
-        this.status.innerHTML = `
+        this.setHtml(this.status, `
           <div class="callsign">${rankChip}<span class="f-${me.faction}">${escapeHtml(me.handle)}</span></div>
-          <div class="dim">awaiting redeployment</div>`;
+          <div class="dim">awaiting redeployment</div>`);
       } else {
         const meters = METERS.map(
           (m) => `
@@ -367,19 +385,19 @@ export class Hud {
         const builderLine = builderPhase
           ? `builder: ${builderPhase}`
           : 'builder: in tank';
-        this.status.innerHTML = `
+        this.setHtml(this.status, `
           <div class="callsign">${rankChip}<span class="f-${me.faction}">${escapeHtml(me.handle)}</span>
             <span class="dim">· ${FACTION_NAMES[me.faction]} · ${rank.name}</span></div>
           ${meters}
-          <div class="dim">${builderLine}${me.carriedPill != null ? ' · ◉ carrying pillbox' : ''}</div>`;
+          <div class="dim">${builderLine}${me.carriedPill != null ? ' · ◉ carrying pillbox' : ''}</div>`);
       }
     } else if (state.you) {
-      this.status.innerHTML = `<div class="callsign"><span class="f-${state.you.faction}">${escapeHtml(state.you.handle)}</span></div><div class="dim">deploying…</div>`;
+      this.setHtml(this.status, `<div class="callsign"><span class="f-${state.you.faction}">${escapeHtml(state.you.handle)}</span></div><div class="dim">deploying…</div>`);
     }
 
-    if (state.war) this.war.innerHTML = warLine(state.war);
+    if (state.war) this.setHtml(this.war, warLine(state.war));
 
-    this.feed.innerHTML = state.feed.map((l) => `<div>${escapeHtml(l)}</div>`).join('');
+    this.setHtml(this.feed, state.feed.map((l) => `<div>${escapeHtml(l)}</div>`).join(''));
 
     this.drawMinimap(state);
   }
@@ -388,7 +406,7 @@ export class Hud {
     const ctx = this.minimap.getContext('2d')!;
     this.miniTiles.sync(state);
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(this.miniTiles.canvas, 0, 0, MAP_SIZE * TILE_PX, MAP_SIZE * TILE_PX, 0, 0, 180, 180);
+    ctx.drawImage(this.miniTiles.canvas, 0, 0, MAP_SIZE, MAP_SIZE, 0, 0, 180, 180);
     const k = 180 / MAP_SIZE;
     for (const b of state.bases) {
       ctx.fillStyle = FACTION_COLORS[b.owner];

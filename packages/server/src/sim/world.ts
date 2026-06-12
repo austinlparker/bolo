@@ -758,9 +758,13 @@ export class World {
       const cy = base.y + 0.5;
 
       // passive restock for owned bases — paused while enemies contest the pad
-      const contested = [...this.tanks.values()].some(
-        (t) => t.alive && t.faction !== base.owner && Math.hypot(t.x - cx, t.y - cy) < 6,
-      );
+      let contested = false;
+      for (const t of this.tanks.values()) {
+        if (t.alive && t.faction !== base.owner && Math.hypot(t.x - cx, t.y - cy) < 6) {
+          contested = true;
+          break;
+        }
+      }
       if (base.owner !== 'neutral' && !contested) {
         const t = (this.regenTimers.get(base.id) ?? BASE_REGEN_INTERVAL) - DT;
         if (t <= 0) {
