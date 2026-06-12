@@ -23,6 +23,7 @@ import {
   type Pillbox,
   PLAYER_VIEW_RADIUS,
   type PlayerProfile,
+  PROTOCOL_VERSION,
   type ServerMsg,
   SPECTATOR_HZ,
   type SpectateMsg,
@@ -535,6 +536,7 @@ export class GameDO implements DurableObject {
     }
     return {
       t: 'welcome',
+      v: PROTOCOL_VERSION,
       you:
         session.role === 'player' && session.did && session.handle && faction && session.tankId !== undefined
           ? { did: session.did, handle: session.handle, faction, tankId: session.tankId }
