@@ -29,13 +29,26 @@ const NPC_NAMES = [
 ];
 
 interface AiMemory {
-  path: [number, number][]; // tile-center waypoints from BFS
+  path: [number, number][]; // tile-center waypoints from A*
   pathAge: number; // ticks since computed
   goalKey: string;
   stuckTicks: number;
   lastX: number;
   lastY: number;
+  /** current duel target, for reaction delay on a fresh acquisition */
+  targetId: number;
+  targetSince: number;
+  /** wandering aim error (radians), resampled every half second */
+  aimJitter: number;
+  aimJitterTick: number;
 }
+
+// Humanizers: garrison bots aimed with perfect server-side information and
+// fired the same tick a target entered range — telemetry showed a 52% bot
+// hit rate vs 7-10% for humans, and a 12:1 kill ratio. A beat of reaction
+// time plus a wandering aim error keeps them dangerous but beatable.
+const NPC_REACTION_TICKS = Math.round(TICK_HZ * 0.6);
+const NPC_AIM_SPREAD = 0.12; // radians; ~7° max error, resampled at 2Hz
 
 let npcCounter = 0;
 const memories = new Map<number, AiMemory>();
@@ -91,8 +104,20 @@ export function npcThink(world: World, tank: Tank): TankInput {
       }
     }
     if (enemy) {
-      return steerAndShoot(world, tank, enemy.x, enemy.y, enemyD > 3, tank.shells > 0);
+      if (mem.targetId !== enemy.id) {
+        mem.targetId = enemy.id;
+        mem.targetSince = world.tick;
+      }
+      const acquired = world.tick - mem.targetSince >= NPC_REACTION_TICKS;
+      if (world.tick - mem.aimJitterTick >= TICK_HZ / 2) {
+        mem.aimJitterTick = world.tick;
+        mem.aimJitter = (Math.random() * 2 - 1) * NPC_AIM_SPREAD;
+      }
+      return steerAndShoot(
+        world, tank, enemy.x, enemy.y, enemyD > 3, acquired && tank.shells > 0, mem.aimJitter,
+      );
     }
+    mem.targetId = -1;
 
     // 2) soften a hostile pillbox from stand-off range
     let pill: Pillbox | null = null;
@@ -187,7 +212,18 @@ export function npcThink(world: World, tank: Tank): TankInput {
 function getMemory(tank: Tank): AiMemory {
   let mem = memories.get(tank.id);
   if (!mem) {
-    mem = { path: [], pathAge: Infinity, goalKey: '', stuckTicks: 0, lastX: tank.x, lastY: tank.y };
+    mem = {
+      path: [],
+      pathAge: Infinity,
+      goalKey: '',
+      stuckTicks: 0,
+      lastX: tank.x,
+      lastY: tank.y,
+      targetId: -1,
+      targetSince: 0,
+      aimJitter: 0,
+      aimJitterTick: -Infinity,
+    };
     memories.set(tank.id, mem);
   }
   return mem;
@@ -200,8 +236,9 @@ function steerAndShoot(
   ty: number,
   advance: boolean,
   wantFire: boolean,
+  aimError = 0,
 ): TankInput {
-  const want = Math.atan2(ty - tank.y, tx - tank.x);
+  const want = Math.atan2(ty - tank.y, tx - tank.x) + aimError;
   const delta = angleDelta(tank.dir, want);
 
   // local avoidance: probe ahead, veer away from walls and open sea

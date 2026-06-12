@@ -39,7 +39,9 @@ export const TANK_RESPAWN_SECONDS = 6;
 // Reverse gear: top speed backing up, as a fraction of forward max. Slow
 // enough that reversing is an escape maneuver, not a viable way to fight.
 export const TANK_REVERSE_FACTOR = 0.5;
-export const BOAT_SPEED = 3.2; // tiles/sec on water when on a boat
+// Faster than road speed: committing 10 trees and an exposed crossing to
+// the open water should pay off (at 3.2 a boat was slower than driving).
+export const BOAT_SPEED = 4.4; // tiles/sec on water when on a boat
 
 // --- Shells ---
 // Ranges are scaled up from original Bolo's (7/8) for the larger viewport;
@@ -93,6 +95,11 @@ export const PLAYER_VIEW_RADIUS = 24; // server only sends entities within this 
 
 // --- War lifecycle ---
 export const WAR_MIN_MINUTES = 10; // a war cannot end before this
+// Past this, holding MORE bases wins (total conquest still ends it early).
+// Symmetric garrisons made all-14-bases a random walk that effectively
+// never terminated: production saw a 226-minute war and an 8-hour 7v7
+// deadlock. Ties at the cap go to sudden death: first faction to lead.
+export const WAR_MAX_MINUTES = 45;
 export const INTERMISSION_SECONDS = 120;
 export const BASES_PER_FACTION_AT_START = 3;
 export const TOTAL_BASES = 14;
