@@ -3,7 +3,7 @@
 # Run AFTER scripts/promo.ts and scripts/promo-audio.ts. Requires ffmpeg + jq.
 set -euo pipefail
 
-OUT=/tmp/atbolo-promo
+OUT="${1:-/tmp/atbolo-promo}" # pass /tmp/atbolo-promo-sq for the square cut
 SFX="$(cd "$(dirname "$0")/../public/assets/sfx" && pwd)"
 cd "$OUT"
 
