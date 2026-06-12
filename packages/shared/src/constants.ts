@@ -36,6 +36,9 @@ export const TANK_START_SHELLS = 20;
 export const TANK_START_MINES = 4;
 export const TANK_FIRE_COOLDOWN = 0.35; // seconds between shots
 export const TANK_RESPAWN_SECONDS = 6;
+// Reverse gear: top speed backing up, as a fraction of forward max. Slow
+// enough that reversing is an escape maneuver, not a viable way to fight.
+export const TANK_REVERSE_FACTOR = 0.5;
 export const BOAT_SPEED = 3.2; // tiles/sec on water when on a boat
 
 // --- Shells ---
