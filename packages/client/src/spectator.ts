@@ -40,6 +40,7 @@ export async function startSpectator(root: HTMLElement): Promise<void> {
     <div id="spec-live">connecting to the front...</div>
     <a class="button-link kbtn" href="/">→ ENLIST</a>
     <a class="button-link kbtn" href="/leaderboard">→ VETERANS</a>
+    <a class="button-link kbtn" href="/notes">→ BULLETINS</a>
   `;
   root.appendChild(panel);
   const live = panel.querySelector<HTMLElement>('#spec-live')!;

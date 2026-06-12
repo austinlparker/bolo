@@ -83,8 +83,13 @@ export class Input {
         ev.preventDefault();
         return;
       }
-      if (ev.code === 'Escape' && hud.helpOpen()) {
+      if (ev.code === 'KeyN' && !ev.repeat) {
+        hud.toggleNotes();
+        return;
+      }
+      if (ev.code === 'Escape' && (hud.helpOpen() || hud.notesOpen())) {
         hud.toggleHelp(false);
+        hud.toggleNotes(false);
         return;
       }
       // shift+up/down adjust gun range (trackpads have no back/forward
