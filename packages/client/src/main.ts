@@ -1,5 +1,5 @@
 import './style.css';
-import { FACTION_NAMES, type ServerMsg } from '@bolo/shared';
+import { FACTION_NAMES, PROTOCOL_VERSION, type ServerMsg } from '@bolo/shared';
 import { Hud } from './hud';
 import { Input } from './input';
 import { startLeaderboard } from './leaderboard';
@@ -86,6 +86,18 @@ async function startPlayer(): Promise<void> {
   function handleMsg(msg: ServerMsg): void {
     switch (msg.t) {
       case 'welcome':
+        // stale bundle in a long-lived tab: reload once to pick up the
+        // current build, then fall back to nagging (in case of a cache
+        // that survives reloads — never loop)
+        if (msg.v !== undefined && msg.v > PROTOCOL_VERSION) {
+          const key = `bolo_reload_v${msg.v}`;
+          if (!sessionStorage.getItem(key)) {
+            sessionStorage.setItem(key, '1');
+            location.reload();
+            return;
+          }
+          hud.showToast('⚠ a new version is out — please refresh', 8000, 'error');
+        }
         state.applyWelcome(msg);
         if (msg.you) {
           const controls = touch

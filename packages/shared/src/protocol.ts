@@ -6,6 +6,14 @@
 import type { EmoteKind, Faction, Owner } from './constants';
 import type { Base, BuilderOrderKind, Pillbox, PlayerProfile, Tank, WarInfo, WarRecord } from './types';
 
+/**
+ * Bumped on breaking wire changes. The server stamps it on `welcome`; a
+ * client built against an older version reloads to pick up the new bundle
+ * (deploys iterate fast and stale tabs otherwise play a skewed protocol —
+ * an early playtester's whole first session was an unversioned old bundle).
+ */
+export const PROTOCOL_VERSION = 2;
+
 // ---------- client -> server ----------
 
 export interface HelloMsg {
@@ -142,6 +150,8 @@ export type GameEvent =
 
 export interface WelcomeMsg {
   t: 'welcome';
+  /** server's PROTOCOL_VERSION; clients reload when they're behind */
+  v?: number;
   you: { did: string; handle: string; faction: Faction; tankId: number } | null; // null for spectators
   /** your persistent career stats (players only) */
   profile?: PlayerProfile;
