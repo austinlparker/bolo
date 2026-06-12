@@ -6,6 +6,7 @@ import {
   EMOTES,
   FACTION_NAMES,
   MAP_SIZE,
+  type Owner,
   type WarInfo,
 } from '@bolo/shared';
 import { MiniMapCache } from './minimap';
@@ -395,7 +396,7 @@ export class Hud {
       this.setHtml(this.status, `<div class="callsign"><span class="f-${state.you.faction}">${escapeHtml(state.you.handle)}</span></div><div class="dim">deploying…</div>`);
     }
 
-    if (state.war) this.setHtml(this.war, warLine(state.war));
+    if (state.war) this.setHtml(this.war, warLine(state.war, state.bases));
 
     this.setHtml(this.feed, state.feed.map((l) => `<div>${escapeHtml(l)}</div>`).join(''));
 
@@ -430,8 +431,17 @@ export class Hud {
   }
 }
 
-export function warLine(war: WarInfo): string {
-  const c = war.baseCounts;
+export function warLine(war: WarInfo, bases?: { owner: Owner }[]): string {
+  // war.baseCounts is a snapshot from the welcome message and goes stale as
+  // bases change hands mid-war; when the live entity feed is available
+  // (player HUD), count from it instead. Spectate frames arrive with fresh
+  // counts every second, so /map passes nothing.
+  let c = war.baseCounts;
+  if (bases?.length) {
+    const live: Record<Owner, number> = { dawn: 0, dusk: 0, neutral: 0 };
+    for (const b of bases) live[b.owner]++;
+    c = live;
+  }
   if (war.phase === 'intermission' && war.nextWarAt) {
     const s = Math.max(0, Math.ceil((war.nextWarAt - Date.now()) / 1000));
     return `WAR ${war.warNumber} OVER — next war in ${s}s`;

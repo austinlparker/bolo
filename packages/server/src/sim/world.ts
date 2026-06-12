@@ -42,6 +42,7 @@ import {
   SHELL_SPEED,
   TANK_ACCEL,
   TANK_BRAKE,
+  TANK_REVERSE_FACTOR,
   TANK_FIRE_COOLDOWN,
   TANK_MAX_ARMOR,
   TANK_MAX_MINES,
@@ -440,12 +441,16 @@ export class World {
       maxSpeed = TANK_MAX_SPEED * TERRAIN[here].tankSpeed;
     }
 
-    const target = input.accel > 0 ? maxSpeed : 0;
-    const rate = input.accel < 0 ? TANK_BRAKE : TANK_ACCEL;
-    if (tank.speed < target) tank.speed = Math.min(target, tank.speed + TANK_ACCEL * DT);
-    else tank.speed = Math.max(target, tank.speed - rate * DT);
+    // W drives forward; S brakes, then backs up at half speed; neither coasts.
+    // Input opposing the current motion brakes harder than plain accel/coast.
+    const target =
+      input.accel > 0 ? maxSpeed : input.accel < 0 ? -maxSpeed * TANK_REVERSE_FACTOR : 0;
+    const opposing = (input.accel < 0 && tank.speed > 0) || (input.accel > 0 && tank.speed < 0);
+    const rate = opposing ? TANK_BRAKE : TANK_ACCEL;
+    if (tank.speed < target) tank.speed = Math.min(target, tank.speed + rate * DT);
+    else if (tank.speed > target) tank.speed = Math.max(target, tank.speed - rate * DT);
 
-    if (tank.speed > 0) {
+    if (tank.speed !== 0) {
       const nx = tank.x + Math.cos(tank.dir) * tank.speed * DT;
       const ny = tank.y + Math.sin(tank.dir) * tank.speed * DT;
       const nextTile = this.tileAt(nx, ny);

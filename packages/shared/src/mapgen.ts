@@ -58,6 +58,15 @@ export function generateMap(seed: number): GeneratedMap {
     return 0.5 + ((a + b) / 2 - 0.5) * 1.41;
   };
 
+  // --- per-seed personality: macro knobs sampled once, so successive wars
+  // read as different islands rather than re-rolls of the same one ---
+  const falloffStart = 0.5 + rand() * 0.12; // how far land reaches toward the rim
+  const elevFreq = 5 + rand() * 2.5; // continent blobbiness
+  const forestThresh = 0.54 + rand() * 0.08; // lower = denser woods
+  const swampThresh = 0.42 + rand() * 0.16;
+  const riverFreq = 4 + rand() * 2.5;
+  const riverHalfWidth = 0.006 + rand() * 0.014; // ridge-river thickness
+
   // --- terrain from noise, island falloff towards the edges ---
   const c = (W - 1) / 2;
   for (let y = 0; y < W; y++) {
@@ -65,27 +74,42 @@ export function generateMap(seed: number): GeneratedMap {
       const dx = (x - c) / c;
       const dy = (y - c) / c;
       const r = Math.sqrt(dx * dx + dy * dy);
-      const falloff = Math.max(0, r - 0.55) * 1.8;
-      const elev = sym(elevSeed, 6, x, y, 5) - falloff;
+      const falloff = Math.max(0, r - falloffStart) * 1.8;
+      const elev = sym(elevSeed, elevFreq, x, y, 5) - falloff;
 
       let t: Terrain;
       if (elev < 0.32) t = Terrain.DeepSea;
       else if (elev < 0.38) t = Terrain.River; // shallow coastal water
-      else if (elev < 0.42 && sym(swampSeed, 10, x, y, 3) > 0.5) t = Terrain.Swamp;
+      else if (elev < 0.42 && sym(swampSeed, 10, x, y, 3) > swampThresh) t = Terrain.Swamp;
       else {
         // winding rivers along noise ridge lines, only on land
-        const rn = sym(riverSeed, 5, x, y, 4);
-        if (Math.abs(rn - 0.5) < 0.012) t = Terrain.River;
-        else if (sym(forestSeed, 9, x, y, 4) > 0.58) t = Terrain.Forest;
+        const rn = sym(riverSeed, riverFreq, x, y, 4);
+        if (Math.abs(rn - 0.5) < riverHalfWidth) t = Terrain.River;
+        else if (sym(forestSeed, 9, x, y, 4) > forestThresh) t = Terrain.Forest;
         else t = Terrain.Grass;
       }
       terrain[idx(x, y)] = t;
     }
   }
 
+  // --- base layout personality: where this war's fighting will live.
+  // Weights bias site sampling; symmetry comes from mirroring as usual. ---
+  const rNorm = (x: number, y: number) => {
+    const dx = (x - c) / c;
+    const dy = (y - c) / c;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+  const layouts: ((x: number, y: number) => number)[] = [
+    () => 1, // scatter: bases anywhere, the classic sprawl
+    (x, y) => (rNorm(x, y) > 0.45 ? 1 : 0.12), // coastal ring: beach landings
+    (x, y) => (rNorm(x, y) < 0.42 ? 1 : 0.15), // heartland: one central melee
+    (x, y) => (Math.abs(x - y) < W * 0.2 ? 1 : 0.1), // spine: fight along the diagonal
+  ];
+  const layoutWeight = layouts[Math.floor(rand() * layouts.length)];
+
   // --- base sites: pick well-spaced land tiles in the canonical half, mirror them ---
   const pairCount = TOTAL_BASES / 2;
-  const baseSites = pickSites(terrain, rand, pairCount, 24, 0.18, 0.5);
+  const baseSites = pickSites(terrain, rand, pairCount, 24, 0.18, 0.5, [], layoutWeight);
   const bases: Base[] = [];
   // The BASES_PER_FACTION_AT_START sites closest to the NW corner start owned by Dawn.
   const ranked = [...baseSites].sort((a, b) => a[0] + a[1] - (b[0] + b[1]));
@@ -127,23 +151,40 @@ export function generateMap(seed: number): GeneratedMap {
     }
   }
 
-  // --- roads: connect each base to its nearest neighbour (bridges over rivers) ---
-  for (const b of bases) {
-    let best: Base | null = null;
+  // --- roads: a minimum spanning tree over the bases, so the network is
+  // CONNECTED (nearest-neighbour linking left isolated clusters), plus the
+  // occasional extra cross-link so some islands get ring roads. Tile
+  // symmetry is preserved by paveTile mirroring every tile it lays. ---
+  const linked = new Set([bases[0].id]);
+  while (linked.size < bases.length) {
+    let from: Base | null = null;
+    let to: Base | null = null;
     let bestD = Infinity;
-    for (const o of bases) {
-      if (o.id === b.id) continue;
-      const d = Math.abs(o.x - b.x) + Math.abs(o.y - b.y);
-      if (d < bestD) {
-        bestD = d;
-        best = o;
+    for (const a of bases) {
+      if (!linked.has(a.id)) continue;
+      for (const b of bases) {
+        if (linked.has(b.id)) continue;
+        const d = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+        if (d < bestD) {
+          bestD = d;
+          from = a;
+          to = b;
+        }
       }
     }
-    if (best) layRoad(terrain, b.x, b.y, best.x, best.y);
+    if (!from || !to) break;
+    linked.add(to.id);
+    layRoad(terrain, from.x, from.y, to.x, to.y, rand);
+  }
+  const extraLoops = Math.floor(rand() * 3); // 0-2 redundant links
+  for (let i = 0; i < extraLoops; i++) {
+    const a = bases[Math.floor(rand() * bases.length)];
+    const b = bases[Math.floor(rand() * bases.length)];
+    if (a.id !== b.id) layRoad(terrain, a.x, a.y, b.x, b.y, rand);
   }
 
   // --- hidden neutral mines in the contested middle of the island ---
-  const mineCount = 40;
+  const mineCount = 25 + Math.floor(rand() * 30);
   for (let placed = 0; placed < mineCount; ) {
     const x = 32 + Math.floor(rand() * (W - 64));
     const y = 32 + Math.floor(rand() * (W - 64));
@@ -173,6 +214,9 @@ function clearPad(terrain: Uint8Array, cx: number, cy: number): void {
 /**
  * Pick `count` mutually-distant land tiles inside the canonical (NW) half.
  * `inner`/`outer` bound the normalized distance from the map border.
+ * `weight` (0..1) probabilistically biases where sites land (see the layout
+ * personalities in generateMap); if the bias starves the search, it relaxes
+ * to uniform rather than under-filling the map.
  */
 function pickSites(
   terrain: Uint8Array,
@@ -182,17 +226,19 @@ function pickSites(
   inner: number,
   outer: number,
   avoid: [number, number][] = [],
+  weight: (x: number, y: number) => number = () => 1,
 ): [number, number][] {
   const sites: [number, number][] = [];
   const lo = Math.floor(W * inner);
   const hi = Math.floor(W * (1 - inner));
   let attempts = 0;
-  while (sites.length < count && attempts < 8000) {
+  while (sites.length < count && attempts < 20000) {
     attempts++;
     const x = lo + Math.floor(rand() * (hi - lo));
     const y = lo + Math.floor(rand() * (hi - lo));
     // canonical half only (strictly above the anti-diagonal mirror line)
     if (y * W + x >= (W * W) / 2) continue;
+    if (attempts < 12000 && rand() > weight(x, y)) continue;
     const t = terrain[idx(x, y)] as Terrain;
     if (t !== Terrain.Grass && t !== Terrain.Forest) continue;
     const tooClose = [...sites, ...avoid].some(
@@ -208,14 +254,37 @@ function pickSites(
   return sites;
 }
 
-/** L-shaped road; roads laid over river tiles read as bridges, Bolo style. */
-function layRoad(terrain: Uint8Array, x0: number, y0: number, x1: number, y1: number): void {
-  const sx = Math.sign(x1 - x0);
-  for (let x = x0; x !== x1; x += sx) paveTile(terrain, x, y0);
-  const sy = Math.sign(y1 - y0);
-  for (let y = y0; y !== y1 + sy; y += sy || 1) {
-    paveTile(terrain, x1, y);
-    if (sy === 0) break;
+/**
+ * Wandering road: walks toward the target in straight runs of 3-7 tiles,
+ * picking each run's axis at random in proportion to the remaining
+ * distance. Routes meander with corners instead of tracing one rigid L,
+ * but every segment is a straight, drivable stretch (a 1-tile zigzag would
+ * bounce the tank's speed-boost tile check every step). Roads laid over
+ * river tiles read as bridges, Bolo style.
+ */
+function layRoad(
+  terrain: Uint8Array,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  rand: () => number,
+): void {
+  let x = x0;
+  let y = y0;
+  paveTile(terrain, x, y);
+  let guard = 0;
+  while ((x !== x1 || y !== y1) && guard++ < 200) {
+    const dx = x1 - x;
+    const dy = y1 - y;
+    const alongX = dy === 0 || (dx !== 0 && rand() < Math.abs(dx) / (Math.abs(dx) + Math.abs(dy)));
+    const remaining = Math.abs(alongX ? dx : dy);
+    const run = Math.min(remaining, 3 + Math.floor(rand() * 5));
+    for (let i = 0; i < run; i++) {
+      if (alongX) x += Math.sign(dx);
+      else y += Math.sign(dy);
+      paveTile(terrain, x, y);
+    }
   }
 }
 
