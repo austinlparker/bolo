@@ -1463,6 +1463,7 @@ body.touch-mode #hud-status .rank-chip {
 .pcard-backdrop {
   position: fixed;
   inset: 0;
+  font-family: var(--font-chrome);
   background: rgba(4, 5, 8, 0.7);
   display: flex;
   align-items: center;
