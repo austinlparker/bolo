@@ -54,6 +54,8 @@ the decent thing to do.
 | `mobile/joystick/` | Mobile Controls | Virtual stick + buttons for `touch.ts`. `joystick_circle_pad_*` (base) + `joystick_circle_nub_*` (thumb); `button_circle/diamond/...` for fire/action. |
 | `mobile/icons/` | Mobile Controls | HUD glyphs: `icon_crosshair`, `icon_fire`, `icon_cog` (NPC/builder), `icon_lock`, `icon_menu`, `icon_burst`, etc. |
 | `ui/grey/`, `ui/blue/` | UI Pack | Panels, buttons (9-slice `button_rectangle_*`), arrows, sliders for HUD + login chrome. Grey = neutral, blue = accent. |
+| `ui/scifi/` | UI Pack - Sci-fi | `metalPanel.png` 9-sliced (`.kpanel` in style.css) → the desktop HUD's gunmetal console frames, darkened with CSS filters. `glassPanel*` unused so far (dialog candidates). |
+| `fonts/` | UI Pack - Sci-fi | **Kenney Future / Future Narrow** (`@font-face`) → all HUD/banner/help chrome lettering; chat + feed body text stays monospace. |
 | `characters-1bit/` | 1-Bit Pack | **Atlas** (`*_packed.png`, transparent, no inter-tile margin → uniform-grid slice). A whole roguelike set: characters/monsters, weapons, items, terrain, UI glyphs, a font. Alt art direction if we ever want a 1-bit look; or cherry-pick icons. Colored + monochrome. |
 | `tower-defense/` | Tower Defense | **Atlas** (`towerDefense_tilesheet.png`, uniform grid). Same cartoon style as the tank/map packs: **turrets → Pillbox** options, terrain plots, road tiles, projectiles, gems/pickups. 299 source tiles packed; slice the grid to pick. |
 | `patterns/` | Pattern Pack | Seamless B/W tileable patterns (stripes, chevrons, bricks, dots, hearts…) for menu/HUD backgrounds or faction texturing. `patternPack_tilesheet.png` is the full contact sheet; `pattern_NN.png` are a curated sample — recolor as needed. |

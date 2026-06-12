@@ -49,9 +49,9 @@ export class Hud {
     root.insertAdjacentHTML(
       'beforeend',
       `
-      <div id="hud-status" class="hud"></div>
-      <div id="hud-war" class="hud"></div>
-      <div id="hud-tools" class="hud"></div>
+      <div id="hud-status" class="hud kpanel"></div>
+      <div id="hud-war" class="hud kpanel"></div>
+      <div id="hud-tools" class="hud kpanel"></div>
       <div id="hud-feed" class="hud"></div>
       <div id="hud-chat" class="hud">
         <div id="chat-log"></div>
@@ -66,8 +66,39 @@ export class Hud {
         <div id="builder-tray"></div>
         <div id="builder-btn" class="kbtn kbtn-round">⚒</div>
       </div>
-      <div id="emote-picker" class="hud"></div>
+      <div id="emote-picker" class="hud kpanel"></div>
       <div id="emote-toggle" class="hud kbtn kbtn-round">🙂</div>
+      <div id="help-overlay">
+        <div class="help-box kpanel">
+          <h2>ATBOLO FIELD MANUAL</h2>
+          <div class="help-sub">press <kbd>?</kbd> or <kbd>esc</kbd> to close</div>
+          <div class="help-cols">
+            <div>
+              <h3>DRIVING</h3>
+              <div class="help-row"><span>accelerate / reverse</span><span class="keys"><kbd>W</kbd> <kbd>S</kbd></span></div>
+              <div class="help-row"><span>turn — <em>tap</em> for fine aim, hold to sweep</span><span class="keys"><kbd>A</kbd> <kbd>D</kbd></span></div>
+              <div class="help-row"><span>fire</span><span class="keys"><kbd>space</kbd></span></div>
+              <h3>COMMS</h3>
+              <div class="help-row"><span>chat</span><span class="keys"><kbd>enter</kbd></span></div>
+              <div class="help-row"><span>emote</span><span class="keys"><kbd>E</kbd></span></div>
+              <div class="help-row"><span>this manual</span><span class="keys"><kbd>?</kbd></span></div>
+            </div>
+            <div>
+              <h3>BUILDER (the little green man)</h3>
+              <div class="help-row"><span>select tool</span><span class="keys"><kbd>1</kbd>–<kbd>6</kbd></span></div>
+              <div class="help-row"><span>send builder to clicked tile</span><span class="keys">click</span></div>
+              <div class="help-row"><span>send builder to gun cursor</span><span class="keys"><kbd>G</kbd></span></div>
+              <div class="help-row"><span>build on your own tile</span><span class="keys"><kbd>V</kbd></span></div>
+              <div class="help-row"><span>recall builder (refunds)</span><span class="keys"><kbd>R</kbd></span></div>
+              <h3>THE WAR</h3>
+              <div class="help-row"><span>capture bases by parking on them</span><span></span></div>
+              <div class="help-row"><span>refuel armor/shells/mines at friendly bases</span><span></span></div>
+              <div class="help-row"><span>dead pillboxes can be salvaged &amp; re-placed</span><span></span></div>
+            </div>
+          </div>
+          <div class="help-foot">tools cost trees — chop forests with the harvest tool · hold the line, commander</div>
+        </div>
+      </div>
     `,
     );
     this.status = document.getElementById('hud-status')!;
@@ -95,6 +126,18 @@ export class Hud {
     recall.onclick = () => this.onRecall?.();
     this.toolsEl.appendChild(recall);
     this.setTool('harvest');
+
+    // help: ? key (wired in input.ts) or this button; click outside to close
+    const help = document.createElement('div');
+    help.className = 'tool kbtn';
+    help.textContent = '? help';
+    help.title = 'controls & field manual (?)';
+    help.onclick = () => this.toggleHelp();
+    this.toolsEl.appendChild(help);
+    const overlay = document.getElementById('help-overlay')!;
+    overlay.onclick = (ev) => {
+      if (ev.target === overlay) this.toggleHelp(false);
+    };
 
     // mobile: chat is hidden behind a toggle so it doesn't cover the field
     const chatWrap = document.getElementById('hud-chat')!;
@@ -203,13 +246,26 @@ export class Hud {
     this.hideToast();
   }
 
+  // ---------- help ----------
+
+  toggleHelp(force?: boolean): void {
+    document.getElementById('help-overlay')!.classList.toggle('show', force);
+  }
+
+  helpOpen(): boolean {
+    return document.getElementById('help-overlay')!.classList.contains('show');
+  }
+
   // ---------- toast ----------
 
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
 
-  showToast(text: string, ms = 1600): void {
+  showToast(text: string, ms = 1600, kind: 'info' | 'error' = 'info'): void {
     const el = document.getElementById('toast')!;
     el.textContent = text;
+    el.classList.toggle('error', kind === 'error');
+    el.classList.remove('show');
+    void el.offsetWidth; // restart the shake animation on repeat errors
     el.classList.add('show');
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.toastTimer = ms > 0 ? setTimeout(() => this.hideToast(), ms) : null;

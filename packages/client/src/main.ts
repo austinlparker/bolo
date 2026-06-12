@@ -80,7 +80,7 @@ async function startPlayer(): Promise<void> {
         if (msg.you) {
           const controls = touch
             ? 'left stick drives · right stick turns the tank & fires · ⚒ builds'
-            : 'WASD drive · space fire · 1-6 builder tools · click to send builder · R recall · enter chat';
+            : 'WASD drive · space fire · 1-6 tools · G sends the builder · press ? for the field manual';
           hud.showBanner(
             `<span class="f-${msg.you.faction}">you fight for ${FACTION_NAMES[msg.you.faction]}</span><br/>` +
               `<small>${controls}</small>`,
@@ -115,7 +115,8 @@ async function startPlayer(): Promise<void> {
         }
         if (msg.code === 'invalid_order') {
           state.pushFeed(`builder: ${msg.msg}`);
-          if (touch) hud.showToast(`builder: ${msg.msg}`);
+          // errors shout: a red toast on every platform, not just a feed line
+          hud.showToast(`⚠ ${msg.msg}`, 2400, 'error');
         }
         break;
       case 'pong':
@@ -126,7 +127,7 @@ async function startPlayer(): Promise<void> {
 
   net.onClose = () => state.pushFeed('connection lost — reconnecting...');
   net.connect();
-  new Input(net, renderer, hud);
+  new Input(net, renderer, hud, state);
 
   function loop(now: number): void {
     requestAnimationFrame(loop);

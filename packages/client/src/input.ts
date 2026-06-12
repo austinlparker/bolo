@@ -1,9 +1,10 @@
 /** Keyboard + mouse -> protocol messages. Bolo-style held controls. */
-import type { InputMsg } from '@bolo/shared';
+import { type InputMsg, MAP_SIZE, SHELL_RANGE } from '@bolo/shared';
 import type { Hud } from './hud';
 import { TOOLS } from './hud';
 import type { Net } from './net';
 import type { Renderer } from './render';
+import type { GameState } from './state';
 
 /** One fine-aim tap turns this many radians (~2.9°); see InputMsg.nudge. */
 const FINE_NUDGE = 0.05;
@@ -17,7 +18,19 @@ export class Input {
   private heldSince = new Map<string, number>();
   private last: InputMsg = { t: 'input', accel: 0, turn: 0, fire: false };
 
-  constructor(net: Net, renderer: Renderer, hud: Hud) {
+  constructor(net: Net, renderer: Renderer, hud: Hud, state: GameState) {
+    // full-keyboard builder dispatch: G sends him to the gun cursor (where
+    // your shells land), V builds on the tile under the tank
+    const dispatchBuilder = (atCursor: boolean) => {
+      const me = state.me();
+      if (!me || !me.alive) return;
+      const wx = atCursor ? me.x + Math.cos(me.dir) * SHELL_RANGE : me.x;
+      const wy = atCursor ? me.y + Math.sin(me.dir) * SHELL_RANGE : me.y;
+      const x = Math.max(0, Math.min(MAP_SIZE - 1, Math.floor(wx)));
+      const y = Math.max(0, Math.min(MAP_SIZE - 1, Math.floor(wy)));
+      net.send({ t: 'builder', order: hud.tool, x, y });
+    };
+
     // a quick tap on a turn key is a precise nudge; only a real hold engages
     // continuous turning (otherwise one 10Hz server tick of full-rate turn
     // — 18° — is the smallest possible aim adjustment)
@@ -70,6 +83,23 @@ export class Input {
       }
       if (ev.code === 'KeyE') {
         hud.toggleEmotePicker();
+        return;
+      }
+      if (ev.key === '?' || ev.code === 'F1') {
+        hud.toggleHelp();
+        ev.preventDefault();
+        return;
+      }
+      if (ev.code === 'Escape' && hud.helpOpen()) {
+        hud.toggleHelp(false);
+        return;
+      }
+      if (ev.code === 'KeyG' && !ev.repeat) {
+        dispatchBuilder(true);
+        return;
+      }
+      if (ev.code === 'KeyV' && !ev.repeat) {
+        dispatchBuilder(false);
         return;
       }
       if (ev.code === 'Space') ev.preventDefault();
