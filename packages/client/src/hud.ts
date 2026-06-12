@@ -39,6 +39,7 @@ export class Hud {
   private feed: HTMLElement;
   private chatLog: HTMLElement;
   chatInput: HTMLInputElement;
+  chatForm: HTMLFormElement;
   private minimap: HTMLCanvasElement;
   private banner: HTMLElement;
   private miniTiles = new MiniMapCache();
@@ -60,15 +61,24 @@ export class Hud {
       <div id="hud-feed" class="hud"></div>
       <div id="hud-chat" class="hud">
         <div id="chat-log"></div>
-        <input id="chat-input" maxlength="240" placeholder="say something... (enter)" />
+        <form id="chat-form">
+          <input id="chat-input" maxlength="240" placeholder="say something..." autocomplete="off" />
+          <button id="chat-send" type="submit" class="kbtn">➤</button>
+        </form>
       </div>
       <div id="chat-toggle" class="hud kbtn kbtn-round">💬</div>
+      <div id="touch-menu" class="hud">
+        <div id="tm-help" class="kbtn" title="field manual">?</div>
+        <a id="tm-board" class="kbtn" href="/leaderboard" title="career leaderboard">🏆</a>
+        <div id="tm-leave" class="kbtn" title="leave the war">⏏</div>
+      </div>
       <canvas id="hud-minimap" class="hud" width="180" height="180"></canvas>
       <div id="banner"></div>
       <div id="toast"></div>
       <div id="death-overlay">⊘ DESTROYED<small></small></div>
       <div id="builder-ui" class="hud">
         <div id="builder-tray"></div>
+        <div id="builder-here" class="kbtn" title="build on your own tile">⌖</div>
         <div id="builder-btn" class="kbtn kbtn-round">⚒</div>
       </div>
       <div id="emote-picker" class="hud kpanel"></div>
@@ -76,8 +86,17 @@ export class Hud {
       <div id="help-overlay">
         <div class="help-box kpanel">
           <h2>ATBOLO FIELD MANUAL</h2>
-          <div class="help-sub">press <kbd>?</kbd> or <kbd>esc</kbd> to close</div>
+          <div class="help-sub"><span class="ht-no">press <kbd>?</kbd> or <kbd>esc</kbd> to close</span><span class="ht-yes">tap outside to close</span></div>
           <div class="help-cols">
+            <div class="help-touch">
+              <h3>TOUCH CONTROLS</h3>
+              <div class="help-row"><span>drive — direction is heading, deflection is throttle</span><span class="keys">left stick</span></div>
+              <div class="help-row"><span>aim &amp; fire — hull swings to the stick, fires on bear</span><span class="keys">right stick</span></div>
+              <div class="help-row"><span>build — arm a tool, then tap the map</span><span class="keys">⚒</span></div>
+              <div class="help-row"><span>build on your own tile (mines go here)</span><span class="keys">⌖</span></div>
+              <div class="help-row"><span>chat / emote</span><span class="keys">💬 🙂</span></div>
+              <div class="help-row"><span>enlarge the minimap</span><span class="keys">tap it</span></div>
+            </div>
             <div>
               <h3>DRIVING</h3>
               <div class="help-row"><span>accelerate / reverse</span><span class="keys"><kbd>W</kbd> <kbd>S</kbd></span></div>
@@ -115,6 +134,14 @@ export class Hud {
     this.feed = document.getElementById('hud-feed')!;
     this.chatLog = document.getElementById('chat-log')!;
     this.chatInput = document.getElementById('chat-input') as HTMLInputElement;
+    this.chatForm = document.getElementById('chat-form') as HTMLFormElement;
+    // form submit covers BOTH the send button and virtual-keyboard return
+    // keys — Android keyboards don't deliver a usable keydown for Enter
+    // (the infamous keyCode 229), which is why mobile chat never sent
+    this.chatForm.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      this.submitChat();
+    });
     this.minimap = document.getElementById('hud-minimap') as HTMLCanvasElement;
     this.banner = document.getElementById('banner')!;
 
@@ -143,6 +170,14 @@ export class Hud {
     help.onclick = () => this.toggleHelp();
     this.toolsEl.appendChild(help);
 
+    // career leaderboard (the touch menu links it on mobile)
+    const board = document.createElement('a');
+    board.className = 'tool kbtn';
+    board.textContent = '🏆 ranks';
+    board.href = '/leaderboard';
+    board.title = 'career leaderboard';
+    this.toolsEl.appendChild(board);
+
     // leave the war: back to the public map as a spectator (tank despawns)
     const leave = document.createElement('div');
     leave.className = 'tool kbtn';
@@ -152,6 +187,14 @@ export class Hud {
       location.href = '/map';
     };
     this.toolsEl.appendChild(leave);
+
+    // touch menu: the desktop toolbar above is display:none on touch, so
+    // help / leaderboard / leave need their own affordances (playtest:
+    // "there's no help button on tablet", "leave button is also absent")
+    document.getElementById('tm-help')!.onclick = () => this.toggleHelp();
+    document.getElementById('tm-leave')!.onclick = () => {
+      location.href = '/map';
+    };
     const overlay = document.getElementById('help-overlay')!;
     overlay.onclick = (ev) => {
       if (ev.target === overlay) this.toggleHelp(false);
@@ -224,7 +267,7 @@ export class Hud {
         btn.textContent = t.label.slice(2, 4).trim();
         ui.classList.remove('open');
         ui.classList.add('armed');
-        this.showToast(`tap the map to send your builder — ${t.label.slice(2)}`, 0);
+        this.showToast(`${t.label.slice(2)} — tap the map, or ⌖ for your own tile`, 0);
       };
       tray.appendChild(el);
     }
@@ -246,7 +289,17 @@ export class Hud {
       }
       ui.classList.toggle('open');
     };
+
+    // ⌖ appears while a tool is armed: dispatch on your own tile, the
+    // touch stand-in for desktop's V — which is where mines go
+    document.getElementById('builder-here')!.onclick = () => {
+      const order = this.takeArmedTool();
+      if (order) this.onDispatchHere?.(order);
+    };
   }
+
+  /** mobile ⌖: build on the tank's own tile (desktop binds this to V) */
+  onDispatchHere: ((order: BuilderOrderKind) => void) | null = null;
 
   /** consume the armed tool for one dispatch (mobile tap flow) */
   takeArmedTool(): BuilderOrderKind | null {
@@ -309,6 +362,29 @@ export class Hud {
     this.banner.classList.add('show');
     if (this.bannerTimer) clearTimeout(this.bannerTimer);
     this.bannerTimer = setTimeout(() => this.banner.classList.remove('show'), ms);
+  }
+
+  // ---------- chat ----------
+
+  onChat: ((text: string) => void) | null = null;
+
+  private submitChat(): void {
+    const text = this.chatInput.value.trim();
+    if (text) this.onChat?.(text);
+    this.chatInput.value = '';
+    // desktop: the input only exists while composing; mobile keeps the
+    // panel (and the OS keyboard) up for follow-ups
+    if (!document.body.classList.contains('touch-mode')) this.closeChat();
+  }
+
+  openChat(): void {
+    this.chatForm.style.display = 'flex';
+    this.chatInput.focus();
+  }
+
+  closeChat(): void {
+    this.chatForm.style.display = 'none';
+    this.chatInput.blur();
   }
 
   addChat(msg: ChatBroadcastMsg): void {
