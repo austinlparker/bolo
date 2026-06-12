@@ -54,7 +54,8 @@ const cy = base.y + 1;
 
 const mkTank = (id: number, handle: string, faction: 'dawn' | 'dusk', x: number, y: number, dir: number, extra = {}) => {
   const t = { id, handle, faction, npc: false, x, y, dir, speed: 2, alive: true, onBoat: false, ...extra };
-  state.tanks.set(id, { cur: t as any, prev: t as any, lastUpdate: Date.now() });
+  // single live snapshot: lerpTank returns the (mutable) view position directly
+  state.tanks.set(id, { cur: t as any, snaps: [{ view: t as any, at: Date.now() }] });
 };
 
 state.you = { did: 'did:dev:you', handle: 'austin.dev', faction: 'dawn', tankId: 1 };

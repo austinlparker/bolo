@@ -12,6 +12,7 @@ import {
 } from './login';
 import { Net } from './net';
 import { Renderer } from './render';
+import { Sound } from './sound';
 import { startSpectator } from './spectator';
 import { loadSprites } from './sprites';
 import { GameState } from './state';
@@ -60,6 +61,10 @@ async function startPlayer(): Promise<void> {
   const state = new GameState();
   const renderer = new Renderer(canvas);
   const hud = new Hud(root);
+  const sound = new Sound();
+  // browsers gate audio behind a user gesture; any input unlocks it
+  addEventListener('pointerdown', () => sound.unlock());
+  addEventListener('keydown', () => sound.unlock());
   const touch = isTouchDevice();
   if (touch) document.body.classList.add('touch-mode');
 
@@ -88,9 +93,26 @@ async function startPlayer(): Promise<void> {
           );
         }
         break;
-      case 'state':
+      case 'state': {
+        const prevShells = new Set(state.shells.map((s) => s.id));
         state.applyState(msg);
+        const ear = state.me();
+        if (ear?.alive) {
+          for (const s of state.shells) {
+            if (!prevShells.has(s.id)) sound.play('fire', { volume: 0.55, at: s, ear });
+          }
+          for (const e of msg.events ?? []) {
+            if (e.e === 'boom') {
+              sound.play(e.kind === 'mine' ? 'bigboom' : 'boom', { volume: 0.8, at: e, ear });
+            } else if (e.e === 'kill' && e.victim === ear.handle) {
+              sound.play('bigboom', { volume: 1 });
+            } else if (e.e === 'base_captured' || e.e === 'pill_captured') {
+              sound.play('capture', { volume: e.handle === ear.handle ? 0.9 : 0.4 });
+            }
+          }
+        }
         break;
+      }
       case 'chat':
         hud.addChat(msg);
         break;
@@ -117,6 +139,7 @@ async function startPlayer(): Promise<void> {
           state.pushFeed(`builder: ${msg.msg}`);
           // errors shout: a red toast on every platform, not just a feed line
           hud.showToast(`⚠ ${msg.msg}`, 2400, 'error');
+          sound.play('error', { volume: 0.7 });
         }
         break;
       case 'pong':
@@ -127,7 +150,7 @@ async function startPlayer(): Promise<void> {
 
   net.onClose = () => state.pushFeed('connection lost — reconnecting...');
   net.connect();
-  new Input(net, renderer, hud, state);
+  new Input(net, renderer, hud, state, sound);
 
   function loop(now: number): void {
     requestAnimationFrame(loop);

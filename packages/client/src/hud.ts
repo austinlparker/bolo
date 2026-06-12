@@ -82,6 +82,7 @@ export class Hud {
               <h3>COMMS</h3>
               <div class="help-row"><span>chat</span><span class="keys"><kbd>enter</kbd></span></div>
               <div class="help-row"><span>emote</span><span class="keys"><kbd>E</kbd></span></div>
+              <div class="help-row"><span>mute / unmute sound</span><span class="keys"><kbd>M</kbd></span></div>
               <div class="help-row"><span>this manual</span><span class="keys"><kbd>?</kbd></span></div>
               <div class="help-row"><span>leave the war (spectate from /map)</span><span class="keys">⏏ button</span></div>
             </div>

@@ -14,15 +14,28 @@ import {
   type ShellView,
   type StateMsg,
   type TankView,
+  TICK_MS,
   type WarInfo,
   type WelcomeMsg,
 } from '@bolo/shared';
 
-export interface InterpTank {
-  cur: TankView;
-  prev: TankView;
-  lastUpdate: number;
+export interface TankSnap {
+  view: TankView;
+  at: number;
 }
+
+export interface InterpTank {
+  /** latest authoritative view (alive/armor/etc. read from here) */
+  cur: TankView;
+  /** recent snapshots, oldest first, for render-delayed interpolation */
+  snaps: TankSnap[];
+}
+
+/**
+ * Render this far in the past so network jitter is absorbed by the snapshot
+ * buffer instead of freezing motion until the next packet lands.
+ */
+const RENDER_DELAY_MS = TICK_MS * 1.2;
 
 export interface Boom {
   x: number;
@@ -39,7 +52,12 @@ export class GameState {
   pills: Pillbox[] = [];
   tanks = new Map<number, InterpTank>();
   builders: BuilderView[] = [];
+  /** previous builder positions by tankId + the time of the current set, for lerping */
+  buildersPrev = new Map<number, { x: number; y: number }>();
+  buildersAt = 0;
   shells: ShellView[] = [];
+  /** when the current shell snapshot landed; shells extrapolate from here */
+  shellsAt = 0;
   war: WarInfo | null = null;
   you: WelcomeMsg['you'] = null;
   /** your persistent career stats, from welcome */
@@ -90,18 +108,21 @@ export class GameState {
       seen.add(tv.id);
       const existing = this.tanks.get(tv.id);
       if (existing) {
-        existing.prev = existing.cur;
         existing.cur = tv;
-        existing.lastUpdate = now;
+        existing.snaps.push({ view: tv, at: now });
+        if (existing.snaps.length > 5) existing.snaps.shift();
       } else {
-        this.tanks.set(tv.id, { cur: tv, prev: tv, lastUpdate: now });
+        this.tanks.set(tv.id, { cur: tv, snaps: [{ view: tv, at: now }] });
       }
     }
     for (const id of [...this.tanks.keys()]) {
       if (!seen.has(id)) this.tanks.delete(id);
     }
     this.shells = msg.shells;
+    this.shellsAt = now;
+    this.buildersPrev = new Map(this.builders.map((b) => [b.tankId, { x: b.x, y: b.y }]));
     this.builders = msg.builders;
+    this.buildersAt = now;
     if (msg.pills) this.pills = msg.pills;
     if (msg.bases) this.bases = msg.bases;
     if (msg.terrain) {
@@ -155,14 +176,31 @@ export class GameState {
     return this.tanks.get(this.you.tankId)?.cur ?? null;
   }
 
-  /** Interpolated position for rendering. */
-  lerpTank(it: InterpTank, now: number, tickMs: number): { x: number; y: number; dir: number } {
-    const t = Math.min(1, (now - it.lastUpdate) / tickMs);
-    const dir = it.prev.dir + shortestAngle(it.prev.dir, it.cur.dir) * t;
+  /**
+   * Interpolated position for rendering: finds the two snapshots bracketing
+   * (now - RENDER_DELAY_MS) and lerps between them, so arrival jitter
+   * reshapes the timeline instead of freezing it.
+   */
+  lerpTank(it: InterpTank, now: number): { x: number; y: number; dir: number } {
+    const s = it.snaps;
+    const last = s[s.length - 1];
+    if (s.length === 1) return { x: last.view.x, y: last.view.y, dir: last.view.dir };
+    const target = now - RENDER_DELAY_MS;
+    let a = s[0];
+    let b = s[1];
+    for (let i = s.length - 1; i > 0; i--) {
+      if (s[i - 1].at <= target || i === 1) {
+        a = s[i - 1];
+        b = s[i];
+        if (s[i - 1].at <= target) break;
+      }
+    }
+    const span = b.at - a.at;
+    const t = span > 0 ? Math.min(1, Math.max(0, (target - a.at) / span)) : 1;
     return {
-      x: it.prev.x + (it.cur.x - it.prev.x) * t,
-      y: it.prev.y + (it.cur.y - it.prev.y) * t,
-      dir,
+      x: a.view.x + (b.view.x - a.view.x) * t,
+      y: a.view.y + (b.view.y - a.view.y) * t,
+      dir: a.view.dir + shortestAngle(a.view.dir, b.view.dir) * t,
     };
   }
 }

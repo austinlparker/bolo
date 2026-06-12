@@ -7,6 +7,7 @@ import {
   MAP_SIZE,
   PILL_MAX_HP,
   SHELL_RANGE,
+  SHELL_SPEED,
   PLAYER_VIEW_RADIUS,
   TANK_RADIUS,
   TICK_MS,
@@ -91,7 +92,7 @@ export class Renderer {
     // camera follows your tank
     const meInterp = state.you ? state.tanks.get(state.you.tankId) : undefined;
     if (meInterp) {
-      const p = state.lerpTank(meInterp, now, TICK_MS);
+      const p = state.lerpTank(meInterp, now);
       this.camX = p.x;
       this.camY = p.y;
     }
@@ -131,8 +132,13 @@ export class Renderer {
       if (onScreen(px, py)) this.drawPill(px, py, p.owner, p.hp, now);
     }
 
+    // builders lerp from their previous snapshot position over one tick
+    const bt = Math.min(1, (now - state.buildersAt) / TICK_MS);
     for (const b of state.builders) {
-      const [px, py] = toScreen(b.x, b.y);
+      const prev = state.buildersPrev.get(b.tankId);
+      const bx = prev ? prev.x + (b.x - prev.x) * bt : b.x;
+      const by = prev ? prev.y + (b.y - prev.y) * bt : b.y;
+      const [px, py] = toScreen(bx, by);
       if (onScreen(px, py, 20)) this.drawBuilder(px, py, b.faction, b.phase, now);
     }
 
@@ -141,9 +147,13 @@ export class Renderer {
       this.drawTank(state, it, now, toScreen, onScreen);
     }
 
-    // shells: faction-tinted tracer + bullet sprite
+    // shells: faction-tinted tracer + bullet sprite. Snapshot positions only
+    // change at 10Hz — far too coarse for the fastest object on screen — so
+    // extrapolate along the flight path between snapshots (capped so a shell
+    // that detonated server-side doesn't sail on for long)
+    const shellLead = Math.min((now - state.shellsAt) / 1000, 0.15) * SHELL_SPEED;
     for (const s of state.shells) {
-      const [px, py] = toScreen(s.x, s.y);
+      const [px, py] = toScreen(s.x + Math.cos(s.dir) * shellLead, s.y + Math.sin(s.dir) * shellLead);
       if (!onScreen(px, py, 20)) continue;
       const tail = 0.55 * this.scale;
       ctx.strokeStyle = TRACER_COLORS[s.f] ?? TRACER_COLORS.neutral;
@@ -164,7 +174,7 @@ export class Renderer {
     // gun-range cursor: Bolo's targeting cursor — where your shells land,
     // at max range along the hull axis
     if (meInterp && meInterp.cur.alive) {
-      const p = state.lerpTank(meInterp, now, TICK_MS);
+      const p = state.lerpTank(meInterp, now);
       const cross = sprites.images[meInterp.cur.faction === 'dawn' ? 'crosshairDawn' : 'crosshairDusk'];
       const range = meInterp.cur.gunRange ?? SHELL_RANGE;
       const [cxs, cys] = toScreen(p.x + Math.cos(p.dir) * range, p.y + Math.sin(p.dir) * range);
@@ -236,7 +246,7 @@ export class Renderer {
         this.lastTrack.delete(t.id);
         continue;
       }
-      const p = state.lerpTank(it, now, TICK_MS);
+      const p = state.lerpTank(it, now);
       const last = this.lastTrack.get(t.id);
       if (!last) {
         this.lastTrack.set(t.id, { x: p.x, y: p.y });
@@ -280,7 +290,7 @@ export class Renderer {
   ): void {
     const ctx = this.ctx;
     const t = it.cur;
-    const p = state.lerpTank(it, now, TICK_MS);
+    const p = state.lerpTank(it, now);
     const [px, py] = toScreen(p.x, p.y);
     if (!onScreen(px, py)) return;
     const r = TANK_RADIUS * this.scale;

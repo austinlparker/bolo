@@ -4,6 +4,7 @@ import type { Hud } from './hud';
 import { TOOLS } from './hud';
 import type { Net } from './net';
 import type { Renderer } from './render';
+import type { Sound } from './sound';
 import type { GameState } from './state';
 
 /** One fine-aim tap turns this many radians (~2.9°); see InputMsg.nudge. */
@@ -18,7 +19,7 @@ export class Input {
   private heldSince = new Map<string, number>();
   private last: InputMsg = { t: 'input', accel: 0, turn: 0, fire: false };
 
-  constructor(net: Net, renderer: Renderer, hud: Hud, state: GameState) {
+  constructor(net: Net, renderer: Renderer, hud: Hud, state: GameState, sound: Sound) {
     // full-keyboard builder dispatch: G sends him to the gun cursor (where
     // your shells land), V builds on the tile under the tank
     const dispatchBuilder = (atCursor: boolean) => {
@@ -101,6 +102,10 @@ export class Input {
       if (ev.shiftKey && (ev.code === 'ArrowUp' || ev.code === 'KeyW' || ev.code === 'ArrowDown' || ev.code === 'KeyS')) {
         adjustRange(ev.code === 'ArrowUp' || ev.code === 'KeyW' ? 1 : -1);
         ev.preventDefault();
+        return;
+      }
+      if (ev.code === 'KeyM' && !ev.repeat) {
+        hud.showToast(sound.toggleMute() ? 'sound muted' : 'sound on', 1100);
         return;
       }
       if (ev.code === 'KeyG' && !ev.repeat) {
