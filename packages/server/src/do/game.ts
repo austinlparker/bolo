@@ -442,13 +442,20 @@ export class GameDO implements DurableObject {
       this.send(session, this.stateFor(session, result.mineChanges, stateBase));
     }
 
-    // spectator frames at SPECTATOR_HZ
+    // spectator frames at SPECTATOR_HZ; most spectators get byte-identical
+    // frames, so serialize the terrain-free variant once
     if (counter % Math.round(TICK_HZ / SPECTATOR_HZ) === 0) {
       const frame = this.spectateFrame();
+      let plainRaw: string | null = null;
       for (const session of this.sessions) {
         if (session.role !== 'spectator') continue;
-        this.send(session, { ...frame, terrain: session.pendingTerrain.length ? session.pendingTerrain : undefined });
-        session.pendingTerrain = [];
+        if (session.pendingTerrain.length) {
+          this.send(session, { ...frame, terrain: session.pendingTerrain });
+          session.pendingTerrain = [];
+        } else {
+          plainRaw ??= JSON.stringify(frame);
+          this.sendRaw(session, plainRaw);
+        }
       }
     }
 
@@ -643,15 +650,20 @@ export class GameDO implements DurableObject {
   // ---------- plumbing ----------
 
   private send(session: Session, msg: ServerMsg): void {
+    this.sendRaw(session, JSON.stringify(msg));
+  }
+
+  private sendRaw(session: Session, raw: string): void {
     try {
-      session.ws.send(JSON.stringify(msg));
+      session.ws.send(raw);
     } catch {
       // socket already closing; the close handler cleans up
     }
   }
 
   private broadcast(msg: ServerMsg): void {
-    for (const s of this.sessions) this.send(s, msg);
+    const raw = JSON.stringify(msg); // serialize once, not once per socket
+    for (const s of this.sessions) this.sendRaw(s, raw);
   }
 
   private broadcastChat(from: string, text: string, faction: Faction | 'system' = 'system'): void {

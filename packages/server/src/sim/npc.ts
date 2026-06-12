@@ -4,8 +4,9 @@
  * beatable — external bots connecting over the public protocol should be
  * able to outplay them.
  *
- * Navigation uses BFS over a coarse 4x4-tile grid, recomputed every few
- * seconds, with local steering between waypoints.
+ * Navigation uses weighted A* over the tile grid, recomputed only when a
+ * path is consumed or its goal changes, with local steering between
+ * waypoints.
  */
 import {
   type Faction,
@@ -132,18 +133,27 @@ export function npcThink(world: World, tank: Tank): TankInput {
     return steerAndShoot(world, tank, goal.x + 0.5, goal.y + 0.5, goalD > 4, tank.shells > 0);
   }
 
-  // navigate via coarse BFS waypoints
+  // navigate via A* waypoints. Repath only when the goal changes or the
+  // path is consumed, plus a slow per-tank-staggered staleness refresh so
+  // terrain edits eventually reroute everyone. (The old fixed 4s cadence
+  // meant every garrison repathing on the same ticks — synchronized
+  // full-map searches were the main driver of the DO's CPU blowouts.)
   const goalKey = `base:${goal.id}:${goal.owner}`;
   mem.pathAge++;
-  if (mem.goalKey !== goalKey || mem.pathAge > TICK_HZ * 4 || mem.path.length === 0) {
+  const stale = mem.pathAge > TICK_HZ * (8 + (tank.id % 5));
+  if (mem.goalKey !== goalKey || stale || (mem.path.length === 0 && goalD > 1.5)) {
     mem.path = findPath(world, tank.x, tank.y, goal.x + 0.5, goal.y + 0.5);
     mem.pathAge = 0;
     mem.goalKey = goalKey;
-    if (mem.path.length === 0 && Math.hypot(goal.x + 0.5 - tank.x, goal.y + 0.5 - tank.y) > 6) {
+    if (mem.path.length === 0 && goalD > 6) {
       // goal unreachable overland from here (cut off by sea/walls): wander
       // toward a random nearby spot and try again on the next recompute
       const ang = Math.random() * Math.PI * 2;
       mem.path = [[tank.x + Math.cos(ang) * 8, tank.y + Math.sin(ang) * 8]];
+    } else if (mem.path.length === 0 && goalD > 1.5) {
+      // nearby but no route found: drive straight at it and let local
+      // steering cope, instead of re-searching the map every tick
+      mem.path = [[goal.x + 0.5, goal.y + 0.5]];
     }
   }
   // reach radius must exceed the tank's full-speed turn radius (~0.94 tiles,
@@ -219,8 +229,32 @@ function steerAndShoot(
   };
 }
 
+// A* scratch buffers, allocated once. findPath used to allocate ~768KB of
+// typed arrays per call; with a dozen garrisons repathing, the allocation +
+// zeroing churn was real CPU inside the DO's single budget (see the
+// [limits] note in wrangler.toml). `stamp` marks which search generation
+// initialized a cell, so the arrays never need clearing between calls.
+const N_TILES = MAP_SIZE * MAP_SIZE;
+const gScore = new Float64Array(N_TILES);
+const cameFrom = new Int32Array(N_TILES);
+const stamp = new Int32Array(N_TILES);
+let generation = 0;
 /**
- * Tile-level Dijkstra (4-connected) over drivable terrain, weighted by
+ * Search budget: an unreachable goal would otherwise exhaust all 65k tiles
+ * on every repath, which is exactly the pathological case that blew the DO's
+ * CPU limit. A capped search reads as "unreachable" to the caller, which
+ * falls back to wandering.
+ */
+const MAX_EXPANSIONS = 12000;
+/** Weighted A* (h x 1.2): slightly suboptimal routes, far fewer expansions. */
+const HEURISTIC_WEIGHT = 1.2;
+
+const NEIGHBORS = [
+  [1, 0], [-1, 0], [0, 1], [0, -1],
+] as const;
+
+/**
+ * Tile-level weighted A* (4-connected) over drivable terrain, weighted by
  * terrain speed so routes prefer roads and open ground. Tiles bordering
  * deep sea carry a heavy penalty: an unweighted "shortest" path hugs the
  * coastline through shallow water, where local steering wedges tanks
@@ -231,44 +265,52 @@ function findPath(world: World, x0: number, y0: number, x1: number, y1: number):
   const start = tileOf(x0, y0);
   const goal = tileOf(x1, y1);
   if (start === goal) return [];
-  const N = MAP_SIZE * MAP_SIZE;
-  const prev = new Int32Array(N).fill(-1);
-  const dist = new Float64Array(N).fill(Infinity);
-  // binary min-heap of [cost, tile]
-  const heap: [number, number][] = [[0, start]];
-  dist[start] = 0;
-  prev[start] = start;
+  generation++;
+  const gx = goal % MAP_SIZE;
+  const gy = (goal / MAP_SIZE) | 0;
+  // manhattan distance, admissible since the cheapest tile (road) costs 1
+  const heur = (x: number, y: number) => (Math.abs(gx - x) + Math.abs(gy - y)) * HEURISTIC_WEIGHT;
+  // binary min-heap of [f = g + h, tile]
+  const heap: [number, number][] = [[heur(start % MAP_SIZE, (start / MAP_SIZE) | 0), start]];
+  gScore[start] = 0;
+  cameFrom[start] = start;
+  stamp[start] = generation;
+  let found = false;
+  let expansions = 0;
   while (heap.length > 0) {
-    const [cost, cur] = heapPop(heap);
-    if (cur === goal) break;
-    if (cost > dist[cur]) continue;
+    const [f, cur] = heapPop(heap);
+    if (cur === goal) {
+      found = true;
+      break;
+    }
     const cx = cur % MAP_SIZE;
-    const cy = Math.floor(cur / MAP_SIZE);
-    for (const [dx, dy] of [
-      [1, 0], [-1, 0], [0, 1], [0, -1],
-    ] as const) {
+    const cy = (cur / MAP_SIZE) | 0;
+    if (f > gScore[cur] + heur(cx, cy)) continue; // stale heap entry
+    if (++expansions > MAX_EXPANSIONS) break;
+    for (const [dx, dy] of NEIGHBORS) {
       const nx = cx + dx;
       const ny = cy + dy;
       if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
       const n = ny * MAP_SIZE + nx;
       const c = tileCost(world, nx, ny);
       if (c === Infinity) continue;
-      const nd = cost + c;
-      if (nd < dist[n]) {
-        dist[n] = nd;
-        prev[n] = cur;
-        heapPush(heap, [nd, n]);
+      const ng = gScore[cur] + c;
+      if (stamp[n] !== generation || ng < gScore[n]) {
+        stamp[n] = generation;
+        gScore[n] = ng;
+        cameFrom[n] = cur;
+        heapPush(heap, [ng + heur(nx, ny), n]);
       }
     }
   }
-  if (prev[goal] === -1) return []; // unreachable; caller falls back/wanders
+  if (!found) return []; // unreachable or over budget; caller falls back
   const path: [number, number][] = [];
   let cur = goal;
   while (cur !== start) {
-    path.unshift([(cur % MAP_SIZE) + 0.5, Math.floor(cur / MAP_SIZE) + 0.5]);
-    cur = prev[cur];
+    path.push([(cur % MAP_SIZE) + 0.5, ((cur / MAP_SIZE) | 0) + 0.5]);
+    cur = cameFrom[cur];
   }
-  return path;
+  return path.reverse();
 }
 
 function tileOf(x: number, y: number): number {
@@ -281,9 +323,7 @@ function tileCost(world: World, x: number, y: number): number {
   const t = world.terrain[y * MAP_SIZE + x] as Terrain;
   if (t === Terrain.DeepSea || t === Terrain.Building || TERRAIN[t].tankSpeed === 0) return Infinity;
   let cost = 1 / TERRAIN[t].tankSpeed; // road 1, grass 1.33, river/swamp 4
-  for (const [dx, dy] of [
-    [1, 0], [-1, 0], [0, 1], [0, -1],
-  ] as const) {
+  for (const [dx, dy] of NEIGHBORS) {
     const nx = x + dx;
     const ny = y + dy;
     if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
