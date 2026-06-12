@@ -52,8 +52,13 @@ ffmpeg -y "${INPUTS[@]}" -filter_complex "$FILTER" -map '[mix]' -ar 44100 mix.wa
 echo "wrote mix.wav"
 
 # --- final encode ----------------------------------------------------------
+# force standard bt709 color tags: PNG sources otherwise leave an sRGB
+# transfer + unknown matrix in the VUI, which strict transcoding pipelines
+# (e.g. Bluesky's video service) can hang on
 ffmpeg -y -framerate 30 -i frames/f%05d.png -i mix.wav \
-  -c:v libx264 -preset medium -crf 21 -pix_fmt yuv420p \
+  -vf "scale=out_color_matrix=bt709:out_range=tv,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709" \
+  -color_primaries bt709 -color_trc bt709 -colorspace bt709 \
+  -c:v libx264 -preset medium -crf 21 -pix_fmt yuv420p -profile:v high -level 4.0 \
   -c:a aac -b:a 160k -shortest -movflags +faststart \
   atbolo-promo.mp4 2>/dev/null
 echo "wrote $OUT/atbolo-promo.mp4"
