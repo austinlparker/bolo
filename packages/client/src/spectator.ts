@@ -29,8 +29,17 @@ export async function startSpectator(root: HTMLElement): Promise<void> {
 
   const panel = document.createElement('div');
   panel.className = 'spec-panel';
-  panel.innerHTML = '<h2>ATBOLO</h2>connecting to the front...';
+  // static skeleton: the nav links are rendered ONCE and never replaced —
+  // rewriting them per frame destroyed the anchor mid-click, eating navigation
+  panel.innerHTML = `
+    <h2>ATBOLO</h2>
+    <div id="spec-live">connecting to the front...</div>
+    <a class="button-link kbtn" href="/">→ ENLIST</a>
+    <a class="button-link kbtn" href="/leaderboard">→ VETERANS</a>
+  `;
   root.appendChild(panel);
+  const live = panel.querySelector<HTMLElement>('#spec-live')!;
+  let lastLive = '';
 
   const state = new GameState();
   const tiles = new TileCache();
@@ -126,8 +135,7 @@ export async function startSpectator(root: HTMLElement): Promise<void> {
             `<div>war ${r.warNumber}: <span class="f-${r.winner}">${FACTION_NAMES[r.winner]}</span> won in ${r.durationMinutes}m</div>`,
         )
         .join('');
-      panel.innerHTML = `
-        <h2>ATBOLO</h2>
+      const html = `
         <div>${warLine(state.war)}</div>
         <div class="bar">
           <div class="dawn" style="width:${dawnPct}%"></div>
@@ -136,9 +144,11 @@ export async function startSpectator(root: HTMLElement): Promise<void> {
         </div>
         <div>${latest ? `${latest.online.players} tank(s) crewed · ${latest.online.spectators} watching` : ''}</div>
         ${histHtml ? `<div class="history">${histHtml}</div>` : ''}
-        <a class="button-link kbtn" href="/">→ ENLIST</a>
-        <a class="button-link kbtn" href="/leaderboard">→ VETERANS</a>
       `;
+      if (html !== lastLive) {
+        lastLive = html;
+        live.innerHTML = html;
+      }
     }
   }
   requestAnimationFrame(draw);

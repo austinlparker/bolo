@@ -78,11 +78,12 @@ export class Hud {
               <div class="help-row"><span>accelerate / reverse</span><span class="keys"><kbd>W</kbd> <kbd>S</kbd></span></div>
               <div class="help-row"><span>turn — <em>tap</em> for fine aim, hold to sweep</span><span class="keys"><kbd>A</kbd> <kbd>D</kbd></span></div>
               <div class="help-row"><span>fire</span><span class="keys"><kbd>space</kbd></span></div>
-              <div class="help-row"><span>gun range down / up — shells land on the reticle</span><span class="keys">mouse back / fwd</span></div>
+              <div class="help-row"><span>gun range up / down — shells land on the reticle</span><span class="keys"><kbd>⇧↑</kbd> <kbd>⇧↓</kbd> or mouse back/fwd</span></div>
               <h3>COMMS</h3>
               <div class="help-row"><span>chat</span><span class="keys"><kbd>enter</kbd></span></div>
               <div class="help-row"><span>emote</span><span class="keys"><kbd>E</kbd></span></div>
               <div class="help-row"><span>this manual</span><span class="keys"><kbd>?</kbd></span></div>
+              <div class="help-row"><span>leave the war (spectate from /map)</span><span class="keys">⏏ button</span></div>
             </div>
             <div>
               <h3>BUILDER (the little green man)</h3>
@@ -135,6 +136,16 @@ export class Hud {
     help.title = 'controls & field manual (?)';
     help.onclick = () => this.toggleHelp();
     this.toolsEl.appendChild(help);
+
+    // leave the war: back to the public map as a spectator (tank despawns)
+    const leave = document.createElement('div');
+    leave.className = 'tool kbtn';
+    leave.textContent = '⏏ leave';
+    leave.title = 'leave the war and watch from the map room';
+    leave.onclick = () => {
+      location.href = '/map';
+    };
+    this.toolsEl.appendChild(leave);
     const overlay = document.getElementById('help-overlay')!;
     overlay.onclick = (ev) => {
       if (ev.target === overlay) this.toggleHelp(false);

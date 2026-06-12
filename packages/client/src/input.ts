@@ -95,6 +95,14 @@ export class Input {
         hud.toggleHelp(false);
         return;
       }
+      // shift+up/down adjust gun range (trackpads have no back/forward
+      // buttons); intercepted before held-state so accel doesn't engage.
+      // repeats allowed: holding sweeps the range.
+      if (ev.shiftKey && (ev.code === 'ArrowUp' || ev.code === 'KeyW' || ev.code === 'ArrowDown' || ev.code === 'KeyS')) {
+        adjustRange(ev.code === 'ArrowUp' || ev.code === 'KeyW' ? 1 : -1);
+        ev.preventDefault();
+        return;
+      }
       if (ev.code === 'KeyG' && !ev.repeat) {
         dispatchBuilder(true);
         return;
