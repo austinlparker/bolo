@@ -14,11 +14,22 @@ import { MAP_SIZE, MineState, Terrain } from '@bolo/shared';
 import type { Faction } from '@bolo/shared';
 
 // --- output geometry ---
+// default: 9:16 vertical (Shorts/Reels). `npx tsx scripts/promo.ts square`
+// renders 1:1, which Bluesky's feed shows full-bleed instead of letterboxed.
+const SQUARE = process.argv.includes('square');
 const VW = 1080;
-const VH = 1920;
+const VH = SQUARE ? 1080 : 1920;
 const FPS = 30;
 const DUR = 28; // seconds
-const OUT = '/tmp/atbolo-promo';
+const OUT = SQUARE ? '/tmp/atbolo-promo-sq' : '/tmp/atbolo-promo';
+
+// vertical text layout per aspect (x is always centered on VW)
+const Y = SQUARE
+  ? { stamp: 270, titleMain: 330, titleSub: 436, titleTag: 492, capture: 360,
+      cardMain: 450, cardSub: 560, cardTag: 630, cardUrl: 740, cardEnlist: 808, cardFree: 866 }
+  : { stamp: 430, titleMain: 560, titleSub: 700, titleTag: 770, capture: 620,
+      cardMain: 760, cardSub: 880, cardTag: 990, cardUrl: 1130, cardEnlist: 1210, cardFree: 1290 };
+const CARD_MAIN_PX = SQUARE ? 140 : 170;
 
 // --- DOM shims (before importing render code) ---
 (globalThis as any).document = {
@@ -397,9 +408,9 @@ function stamp(ctx: any, text: string, t: number, start: number, hold = 1.6): vo
   ctx.textBaseline = 'middle';
   ctx.font = `${size}px "Kenney Future"`;
   ctx.fillStyle = 'rgba(0,0,0,0.65)';
-  ctx.fillText(text, VW / 2 + 6, 430 + 6);
+  ctx.fillText(text, VW / 2 + 6, Y.stamp + 6);
   ctx.fillStyle = '#e8e6df';
-  ctx.fillText(text, VW / 2, 430);
+  ctx.fillText(text, VW / 2, Y.stamp);
   ctx.restore();
 }
 
@@ -414,13 +425,13 @@ function overlays(ctx: any, t: number): void {
     ctx.save();
     ctx.globalAlpha = inA * outA;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    spaced(ctx, 'ATBOLO', VW / 2 + 6, 560 + 6, '180px "Kenney Future"', 0.08, 'rgba(0,0,0,0.55)');
-    spaced(ctx, 'ATBOLO', VW / 2, 560, '180px "Kenney Future"', 0.08, '#e8a33d');
-    spaced(ctx, 'THE FOREVER WAR', VW / 2, 700, '54px "Kenney Future Narrow"', 0.18, '#e8e6df');
+    spaced(ctx, 'ATBOLO', VW / 2 + 6, Y.titleMain + 6, '180px "Kenney Future"', 0.08, 'rgba(0,0,0,0.55)');
+    spaced(ctx, 'ATBOLO', VW / 2, Y.titleMain, '180px "Kenney Future"', 0.08, '#e8a33d');
+    spaced(ctx, 'THE FOREVER WAR', VW / 2, Y.titleSub, '54px "Kenney Future Narrow"', 0.18, '#e8e6df');
     ctx.globalAlpha = inA * outA * 0.85;
     ctx.font = '34px "Kenney Future Narrow"';
     ctx.fillStyle = '#9aa3ad';
-    ctx.fillText('a persistent multiplayer tank war', VW / 2, 770);
+    ctx.fillText('a persistent multiplayer tank war', VW / 2, Y.titleTag);
     ctx.restore();
   }
 
@@ -435,7 +446,7 @@ function overlays(ctx: any, t: number): void {
     ctx.globalAlpha = a;
     ctx.font = '52px "Kenney Future Narrow"';
     ctx.fillStyle = '#e8a33d';
-    ctx.fillText('+1 BASE — DAWN CONCORD', VW / 2, 620);
+    ctx.fillText('+1 BASE — DAWN CONCORD', VW / 2, Y.capture);
     ctx.restore();
   }
 
@@ -451,20 +462,20 @@ function overlays(ctx: any, t: number): void {
     g.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, VW, VH);
-    spaced(ctx, 'ATBOLO', VW / 2, 760, '170px "Kenney Future"', 0.08, '#e8a33d');
-    spaced(ctx, 'THE FOREVER WAR', VW / 2, 880, '50px "Kenney Future Narrow"', 0.18, '#e8e6df');
+    spaced(ctx, 'ATBOLO', VW / 2, Y.cardMain, `${CARD_MAIN_PX}px "Kenney Future"`, 0.08, '#e8a33d');
+    spaced(ctx, 'THE FOREVER WAR', VW / 2, Y.cardSub, '50px "Kenney Future Narrow"', 0.18, '#e8e6df');
     ctx.font = '40px "Kenney Future Narrow"';
     ctx.fillStyle = '#9aa3ad';
-    ctx.fillText('one island. two factions. no respite.', VW / 2, 990);
+    ctx.fillText('one island. two factions. no respite.', VW / 2, Y.cardTag);
     ctx.font = '64px "Kenney Future Narrow"';
     ctx.fillStyle = '#e8e6df';
-    ctx.fillText('atbolo.aparker.io', VW / 2, 1130);
+    ctx.fillText('atbolo.aparker.io', VW / 2, Y.cardUrl);
     ctx.font = '38px "Kenney Future Narrow"';
     ctx.fillStyle = '#7fc46a';
-    ctx.fillText('enlist with your bluesky handle', VW / 2, 1210);
+    ctx.fillText('enlist with your bluesky handle', VW / 2, Y.cardEnlist);
     ctx.font = '32px "Kenney Future Narrow"';
     ctx.fillStyle = '#5d646b';
-    ctx.fillText('free · in your browser · phone too', VW / 2, 1290);
+    ctx.fillText('free · in your browser · phone too', VW / 2, Y.cardFree);
     ctx.restore();
   }
 }
