@@ -33,6 +33,8 @@ export interface Tank {
   y: number;
   dir: number; // radians, 0 = east
   speed: number; // current scalar speed, tiles/sec
+  /** current turn rate, radians/sec — ramps toward input.turn * TANK_TURN_RATE */
+  turnSpeed: number;
   armor: number;
   shells: number;
   mines: number;

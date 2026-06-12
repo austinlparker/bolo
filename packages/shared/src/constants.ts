@@ -23,7 +23,10 @@ export const TANK_RADIUS = 0.38;
 export const TANK_MAX_SPEED = 4.0; // tiles/sec at 100% terrain speed (road)
 export const TANK_ACCEL = 6.0; // tiles/sec^2
 export const TANK_BRAKE = 10.0;
-export const TANK_TURN_RATE = 3.2; // radians/sec
+export const TANK_TURN_RATE = 3.2; // radians/sec, at full ramp
+// Rotational inertia: turn rate ramps UP at this accel (full rate in ~0.32s),
+// but slowing/releasing/reversing is instant so aim never overshoots.
+export const TANK_TURN_ACCEL = 10; // radians/sec^2
 export const TANK_MAX_ARMOR = 40;
 export const TANK_MAX_SHELLS = 40;
 export const TANK_MAX_MINES = 40;

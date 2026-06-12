@@ -52,6 +52,7 @@ import {
   TANK_START_ARMOR,
   TANK_START_MINES,
   TANK_START_SHELLS,
+  TANK_TURN_ACCEL,
   TANK_TURN_RATE,
   TANK_MAX_SPEED,
   TICK_HZ,
@@ -182,6 +183,7 @@ export class World {
       y: 0,
       dir: 0,
       speed: 0,
+      turnSpeed: 0,
       armor: TANK_START_ARMOR,
       shells: TANK_START_SHELLS,
       mines: TANK_START_MINES,
@@ -253,6 +255,7 @@ export class World {
     tank.alive = true;
     tank.armor = TANK_START_ARMOR;
     tank.engagedTick = undefined;
+    tank.turnSpeed = 0;
     tank.shells = TANK_START_SHELLS;
     tank.mines = TANK_START_MINES;
     tank.trees = 0;
@@ -395,12 +398,24 @@ export class World {
   private tickTank(tank: Tank): void {
     const input = this.inputs.get(tank.id) ?? { accel: 0, turn: 0, fire: false };
 
+    // rotational inertia: the turn rate ramps UP toward the input's target
+    // (a tank has mass), but slowing, releasing or reversing is instant so
+    // aim never overshoots the moment you let go
+    const targetRate = clamp(input.turn, -1, 1) * TANK_TURN_RATE;
+    if (targetRate * tank.turnSpeed < 0) tank.turnSpeed = 0; // reversal restarts the ramp
+    if (Math.abs(targetRate) <= Math.abs(tank.turnSpeed)) {
+      tank.turnSpeed = targetRate;
+    } else {
+      tank.turnSpeed =
+        targetRate > 0
+          ? Math.min(targetRate, tank.turnSpeed + TANK_TURN_ACCEL * DT)
+          : Math.max(targetRate, tank.turnSpeed - TANK_TURN_ACCEL * DT);
+    }
     // held turn + queued fine-aim nudges, under one per-tick rotation budget:
     // the held key takes priority, nudges drain from whatever budget remains
-    const maxStep = TANK_TURN_RATE * DT;
-    const turnStep = clamp(input.turn, -1, 1) * maxStep;
+    const turnStep = tank.turnSpeed * DT;
     const pending = this.nudges.get(tank.id) ?? 0;
-    const budget = maxStep - Math.abs(turnStep);
+    const budget = TANK_TURN_RATE * DT - Math.abs(turnStep);
     const nudgeStep = clamp(pending, -budget, budget);
     tank.dir += turnStep + nudgeStep;
     if (Math.abs(pending - nudgeStep) > 1e-6) this.nudges.set(tank.id, pending - nudgeStep);
