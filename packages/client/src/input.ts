@@ -56,21 +56,12 @@ export class Input {
 
     addEventListener('keydown', (ev) => {
       if (document.activeElement === hud.chatInput) {
-        if (ev.code === 'Enter') {
-          const text = hud.chatInput.value.trim();
-          if (text) net.send({ t: 'chat', text });
-          hud.chatInput.value = '';
-          hud.chatInput.style.display = 'none';
-          hud.chatInput.blur();
-        } else if (ev.code === 'Escape') {
-          hud.chatInput.style.display = 'none';
-          hud.chatInput.blur();
-        }
+        // Enter submits via the chat form's native submit; only Escape here
+        if (ev.code === 'Escape') hud.closeChat();
         return;
       }
       if (ev.code === 'Enter') {
-        hud.chatInput.style.display = 'block';
-        hud.chatInput.focus();
+        hud.openChat();
         ev.preventDefault();
         return;
       }

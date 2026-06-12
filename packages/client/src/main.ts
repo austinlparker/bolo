@@ -76,6 +76,11 @@ async function startPlayer(): Promise<void> {
   }));
   hud.onRecall = () => net.send({ t: 'builder_recall' });
   hud.onEmote = (kind) => net.send({ t: 'emote', kind });
+  hud.onChat = (text) => net.send({ t: 'chat', text });
+  hud.onDispatchHere = (order) => {
+    const me = state.me();
+    if (me?.alive) net.send({ t: 'builder', order, x: Math.floor(me.x), y: Math.floor(me.y) });
+  };
   const touchControls = touch ? new TouchControls(root, net) : null;
 
   function handleMsg(msg: ServerMsg): void {
