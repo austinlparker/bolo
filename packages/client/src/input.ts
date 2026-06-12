@@ -4,7 +4,6 @@ import type { Hud } from './hud';
 import { TOOLS } from './hud';
 import type { Net } from './net';
 import type { Renderer } from './render';
-import { RETICLE_COUNT } from './sprites';
 import type { GameState } from './state';
 
 /** One fine-aim tap turns this many radians (~2.9°); see InputMsg.nudge. */
@@ -104,12 +103,6 @@ export class Input {
         dispatchBuilder(false);
         return;
       }
-      if (ev.code === 'KeyT' && !ev.repeat) {
-        renderer.reticle = (renderer.reticle + 1) % RETICLE_COUNT;
-        localStorage.setItem('atbolo-reticle', String(renderer.reticle));
-        hud.showToast(`reticle style ${renderer.reticle + 1}/${RETICLE_COUNT}`, 1100);
-        return;
-      }
       if (ev.code === 'Space') ev.preventDefault();
       const dir = TURN_KEYS[ev.code];
       if (dir && !ev.repeat) {
@@ -157,9 +150,6 @@ export class Input {
         adjustRange(1);
       }
     });
-
-    // reticle style cycling lives on T
-    renderer.reticle = (parseInt(localStorage.getItem('atbolo-reticle') ?? '0', 10) || 0) % RETICLE_COUNT;
 
     // tap/click on the battlefield dispatches the builder with the selected
     // tool. Pointer events cover mouse and touch alike; a "tap" is a short

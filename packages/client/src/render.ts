@@ -11,7 +11,7 @@ import {
   TANK_RADIUS,
   TICK_MS,
 } from '@bolo/shared';
-import { BOOM_FRAMES, EMOTE_SPRITES, RETICLE_COUNT, reticles, sprites, type SpriteKey } from './sprites';
+import { BOOM_FRAMES, EMOTE_SPRITES, sprites, type SpriteKey } from './sprites';
 import type { GameState, InterpTank } from './state';
 import { TILE_PX, TileCache } from './tiles';
 
@@ -52,8 +52,6 @@ export class Renderer {
    * the bright Kenney art in BOLO's moodier dusk palette. White = off.
    */
   ambient = '#aab3c8';
-  /** chosen gun-cursor style, an index into the reticles arrays */
-  reticle = 0;
   camX = MAP_SIZE / 2;
   camY = MAP_SIZE / 2;
 
@@ -167,7 +165,7 @@ export class Renderer {
     // at max range along the hull axis
     if (meInterp && meInterp.cur.alive) {
       const p = state.lerpTank(meInterp, now, TICK_MS);
-      const cross = reticles[meInterp.cur.faction][this.reticle % RETICLE_COUNT];
+      const cross = sprites.images[meInterp.cur.faction === 'dawn' ? 'crosshairDawn' : 'crosshairDusk'];
       const range = meInterp.cur.gunRange ?? SHELL_RANGE;
       const [cxs, cys] = toScreen(p.x + Math.cos(p.dir) * range, p.y + Math.sin(p.dir) * range);
       const cs = this.scale * 0.85;

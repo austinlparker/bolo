@@ -50,13 +50,7 @@ const FILES = {
   tankBase: 'tanks/tankBody_sand_outline.png',
   barrelBase: 'tanks/tankSand_barrel1_outline.png',
   bulletBase: 'projectiles/bulletSand1.png',
-  // gun-range reticle styles, cycled with the mouse back/forward buttons
-  reticle0: 'crosshair/crosshair029.png',
-  reticle1: 'crosshair/crosshair001.png',
-  reticle2: 'crosshair/crosshair018.png',
-  reticle3: 'crosshair/crosshair049.png',
-  reticle4: 'crosshair/crosshair085.png',
-  reticle5: 'crosshair/crosshair099.png',
+  crosshairBase: 'crosshair/crosshair029.png',
   baseStructure: 'rts-scifi/structures/scifiStructure_07.png', // RTS domed HQ -> capturable base
   pillTurret: 'rts-scifi/structures/scifiStructure_13.png', // gun turret -> live pillbox
   pillMount: 'rts-scifi/structures/scifiStructure_14.png', // gunless mount -> dead pillbox husk
@@ -140,12 +134,9 @@ type DerivedKey =
   | 'barrelDusk'
   | 'bulletDawn'
   | 'bulletDusk'
-  | 'bulletNeutral';
-
-export const RETICLE_COUNT = 6;
-
-/** faction-tinted reticle variants, indexed by the player's chosen style */
-export const reticles: Record<'dawn' | 'dusk', CanvasImageSource[]> = { dawn: [], dusk: [] };
+  | 'bulletNeutral'
+  | 'crosshairDawn'
+  | 'crosshairDusk';
 
 export type SpriteKey = FileKey | AtlasKey | TdKey | DerivedKey;
 
@@ -329,13 +320,7 @@ export async function loadSprites(
   img.bulletDusk = tinted(img.bulletBase, null, { multiply: TINT.duskLight });
   img.bulletNeutral = tinted(img.bulletBase, null, { multiply: TINT.neutralLight });
 
-  // gun-range cursor (the crosshair pack art is white; multiply colors it).
-  // every style gets both faction tints; render picks by player preference
-  reticles.dawn.length = 0;
-  reticles.dusk.length = 0;
-  for (let i = 0; i < RETICLE_COUNT; i++) {
-    const base = img[`reticle${i}` as SpriteKey];
-    reticles.dawn.push(tinted(base, null, { multiply: '#f5b04a' }));
-    reticles.dusk.push(tinted(base, null, { multiply: '#a98ef5' }));
-  }
+  // gun-range cursor (the crosshair pack art is white; multiply colors it)
+  img.crosshairDawn = tinted(img.crosshairBase, null, { multiply: '#f5b04a' });
+  img.crosshairDusk = tinted(img.crosshairBase, null, { multiply: '#a98ef5' });
 }

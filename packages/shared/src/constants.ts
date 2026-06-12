@@ -39,8 +39,10 @@ export const TANK_RESPAWN_SECONDS = 6;
 export const BOAT_SPEED = 3.2; // tiles/sec on water when on a boat
 
 // --- Shells ---
+// Ranges are scaled up from original Bolo's (7/8) for the larger viewport;
+// pillboxes deliberately OUTRANGE tanks so assaulting one stays dangerous.
 export const SHELL_SPEED = 9.0; // tiles/sec
-export const SHELL_RANGE = 7.0; // tiles
+export const SHELL_RANGE = 9.0; // tiles, max; players range down with the mouse buttons
 export const SHELL_DAMAGE = 5;
 export const SHELL_RADIUS = 0.12;
 
@@ -50,7 +52,7 @@ export const MINE_TRIGGER_RADIUS = 0.45;
 
 // --- Pillboxes ---
 export const PILL_MAX_HP = 75;
-export const PILL_RANGE = 8.0;
+export const PILL_RANGE = 10.0; // > SHELL_RANGE: see note above
 // Cooldown scales with anger: a freshly damaged pillbox shoots much faster.
 export const PILL_COOLDOWN_CALM = 2.0; // seconds at full health
 export const PILL_COOLDOWN_ANGRY = 0.4; // seconds at 1 hp
