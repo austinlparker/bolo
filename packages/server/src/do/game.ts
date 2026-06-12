@@ -363,6 +363,9 @@ export class GameDO implements DurableObject {
       case 'builder_recall':
         world.builderRecall(session.tankId);
         break;
+      case 'range':
+        world.setGunRange(session.tankId, Number(msg.range));
+        break;
       case 'respawn':
         world.respawn(session.tankId, typeof msg.baseId === 'number' ? msg.baseId : undefined);
         break;
@@ -583,6 +586,7 @@ export class GameDO implements DurableObject {
         view.mines = tank.mines;
         view.trees = tank.trees;
         view.carriedPill = tank.carriedPill;
+        view.gunRange = tank.gunRange;
         if (!tank.alive) {
           view.respawnIn = Math.max(0, Math.ceil((tank.respawnTick - world.tick) / TICK_HZ));
         }

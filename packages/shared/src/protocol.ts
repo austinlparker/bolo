@@ -46,6 +46,14 @@ export interface BuilderRecallMsg {
   t: 'builder_recall';
 }
 
+/** Set the gun range: shells detonate at this distance (classic Bolo range
+ * control — lob short of obstacles or reach out to max). Clamped server-side
+ * to [1, SHELL_RANGE]. Sticky until changed; echoed back on your TankView. */
+export interface RangeMsg {
+  t: 'range';
+  range: number;
+}
+
 export interface RespawnMsg {
   t: 'respawn';
   baseId?: number; // a friendly base to spawn at; otherwise server picks
@@ -72,6 +80,7 @@ export type ClientMsg =
   | InputMsg
   | BuilderMsg
   | BuilderRecallMsg
+  | RangeMsg
   | RespawnMsg
   | ChatMsg
   | EmoteMsg
@@ -99,6 +108,8 @@ export interface TankView {
   carriedPill?: number | null;
   /** seconds until respawn; only on YOUR tank while dead */
   respawnIn?: number;
+  /** current gun range setting; only on YOUR tank */
+  gunRange?: number;
   /** this-life session stats; only on YOUR tank (for live rank progress) */
   kills?: number;
   caps?: number;

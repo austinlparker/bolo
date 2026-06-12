@@ -75,6 +75,7 @@ with code 4001 — don't reconnect with the same token.
 | `input` | `accel`, `turn` ∈ [-1, 1], `fire: bool`, `nudge?: number` | held controls, Bolo-style: applies every tick until replaced. Fractional `turn` enables fine aiming. Positive turn is clockwise (screen space, y-down). Send only on change. `nudge` is a discrete extra rotation in radians (clamped to ±0.35/message), queued server-side and drained at the standard turn rate — lossless fine aiming for tap-style inputs, can't out-turn a held key. |
 | `builder` | `order`, `x`, `y` (tile coords) | dispatch the engineer. `order` ∈ `harvest \| road \| wall \| boat \| pillbox \| mine`. Max range 12 tiles from tank. Costs trees/mines (see below); invalid orders return an `error` frame with the reason. |
 | `builder_recall` | — | abort the current trip; refunds the order's cost |
+| `range` | `range` (tiles) | gun range control, classic Bolo style: shells detonate at this distance. Clamped to [1, 7]. Sticky until changed; your current setting is echoed as `gunRange` on your own `TankView`. |
 | `respawn` | `baseId?` | request respawn at a friendly base (note: auto-respawn at a random friendly base fires 6 s after death; this mainly matters for choosing *where*) |
 | `chat` | `text` (≤240 chars) | global chat |
 | `emote` | `kind` | float an emote bubble over your tank. `kind` ∈ `happy \| angry \| sad \| heart \| laugh \| alert \| question \| sleep`. Rate-limited to one per 1.5 s; broadcast to everyone as `emoted { tankId, kind }`. |

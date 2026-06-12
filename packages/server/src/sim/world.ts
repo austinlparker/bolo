@@ -193,6 +193,7 @@ export class World {
       respawnTick: 0,
       fireCooldown: 0,
       carriedPill: null,
+      gunRange: SHELL_RANGE,
       builder: { phase: 'in_tank', x: 0, y: 0, order: null, workLeft: 0, respawnTick: 0 },
       kills: 0,
       deaths: 0,
@@ -215,6 +216,13 @@ export class World {
 
   setInput(id: number, input: TankInput): void {
     if (this.tanks.has(id)) this.inputs.set(id, input);
+  }
+
+  /** Classic Bolo range control: shells detonate at this distance. */
+  setGunRange(id: number, range: number): void {
+    const tank = this.tanks.get(id);
+    if (!tank || !Number.isFinite(range)) return;
+    tank.gunRange = clamp(range, 1, SHELL_RANGE);
   }
 
   /**
@@ -473,7 +481,8 @@ export class World {
         dir: tank.dir,
         faction: tank.faction,
         ownerTank: tank.id,
-        range: SHELL_RANGE,
+        range: tank.gunRange,
+        fired: tank.gunRange,
       });
     }
 
@@ -569,7 +578,7 @@ export class World {
       shooter_npc: shooter?.npc,
       shooter_client: shooter?.client,
       shooter_faction: String(shell.faction),
-      travel_tiles: round2stat((fromPill ? PILL_RANGE : SHELL_RANGE) - shell.range),
+      travel_tiles: round2stat(shell.fired - shell.range),
       target_npc: victim?.npc,
       target_client: victim?.client,
     });
@@ -720,6 +729,7 @@ export class World {
           faction: pill.owner,
           ownerTank: -1 - pill.id,
           range: PILL_RANGE,
+          fired: PILL_RANGE,
         });
         pill.cooldown = this.pillCooldownFor(pill);
       }
@@ -845,7 +855,9 @@ export class World {
         }
         const tx = b.order.tx + 0.5;
         const ty = b.order.ty + 0.5;
-        if (this.moveBuilder(b, tx, ty)) {
+        // walls are built from OUTSIDE the tile, so he can't entomb himself
+        const arrive = b.order.kind === 'wall' ? 0.95 : 0.15;
+        if (this.moveBuilder(b, tx, ty, arrive)) {
           b.phase = 'working';
           b.workLeft = BUILDER_WORK_SECONDS;
         }
@@ -873,20 +885,22 @@ export class World {
     }
   }
 
-  /** Move builder toward (tx, ty); returns true when arrived. */
-  private moveBuilder(b: { x: number; y: number }, tx: number, ty: number): boolean {
+  /** Move builder toward (tx, ty); returns true when within `arrive`. */
+  private moveBuilder(b: { x: number; y: number }, tx: number, ty: number, arrive = 0.15): boolean {
     const dx = tx - b.x;
     const dy = ty - b.y;
     const dist = Math.hypot(dx, dy);
-    if (dist < 0.15) return true;
+    if (dist < arrive) return true;
     const here = this.tileAt(b.x, b.y);
     const props = TERRAIN[here];
     const speed = props.builderSpeed > 0 ? BUILDER_SPEED * props.builderSpeed : BUILDER_WATER_SPEED;
     const step = Math.min(dist, speed * DT);
     const nx = b.x + (dx / dist) * step;
     const ny = b.y + (dy / dist) * step;
-    // builders walk around buildings rather than through them
-    if (this.tileAt(nx, ny) === Terrain.Building) {
+    // builders walk around buildings rather than through them — unless he's
+    // already inside a wall (one was built on top of him); then he clambers
+    // out instead of being entombed
+    if (this.tileAt(nx, ny) === Terrain.Building && here !== Terrain.Building) {
       // try sliding along one axis
       if (this.tileAt(nx, b.y) !== Terrain.Building) b.x = nx;
       else if (this.tileAt(b.x, ny) !== Terrain.Building) b.y = ny;
@@ -894,7 +908,7 @@ export class World {
     }
     b.x = nx;
     b.y = ny;
-    return Math.hypot(tx - b.x, ty - b.y) < 0.15;
+    return Math.hypot(tx - b.x, ty - b.y) < arrive;
   }
 
   private completeBuilderJob(tank: Tank): void {

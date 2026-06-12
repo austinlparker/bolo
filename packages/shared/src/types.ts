@@ -41,6 +41,8 @@ export interface Tank {
   trees: number;
   onBoat: boolean;
   alive: boolean;
+  /** shells detonate at this distance (player-adjustable, <= SHELL_RANGE) */
+  gunRange: number;
   respawnTick: number;
   fireCooldown: number;
   /** id of a carried (captured) pillbox, or null */
@@ -63,8 +65,10 @@ export interface Shell {
   /** 'neutral' for shells fired by hostile neutral pillboxes (they hate everyone) */
   faction: Owner;
   ownerTank: number;
-  /** distance remaining before it falls inert */
+  /** distance remaining before it detonates */
   range: number;
+  /** the range it was fired with (for travel-distance telemetry) */
+  fired: number;
 }
 
 export interface Pillbox {

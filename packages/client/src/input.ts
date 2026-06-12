@@ -25,8 +25,9 @@ export class Input {
     const dispatchBuilder = (atCursor: boolean) => {
       const me = state.me();
       if (!me || !me.alive) return;
-      const wx = atCursor ? me.x + Math.cos(me.dir) * SHELL_RANGE : me.x;
-      const wy = atCursor ? me.y + Math.sin(me.dir) * SHELL_RANGE : me.y;
+      const range = me.gunRange ?? SHELL_RANGE;
+      const wx = atCursor ? me.x + Math.cos(me.dir) * range : me.x;
+      const wy = atCursor ? me.y + Math.sin(me.dir) * range : me.y;
       const x = Math.max(0, Math.min(MAP_SIZE - 1, Math.floor(wx)));
       const y = Math.max(0, Math.min(MAP_SIZE - 1, Math.floor(wy)));
       net.send({ t: 'builder', order: hud.tool, x, y });
@@ -103,6 +104,12 @@ export class Input {
         dispatchBuilder(false);
         return;
       }
+      if (ev.code === 'KeyT' && !ev.repeat) {
+        renderer.reticle = (renderer.reticle + 1) % RETICLE_COUNT;
+        localStorage.setItem('atbolo-reticle', String(renderer.reticle));
+        hud.showToast(`reticle style ${renderer.reticle + 1}/${RETICLE_COUNT}`, 1100);
+        return;
+      }
       if (ev.code === 'Space') ev.preventDefault();
       const dir = TURN_KEYS[ev.code];
       if (dir && !ev.repeat) {
@@ -128,13 +135,15 @@ export class Input {
       send();
     });
 
-    // mouse back/forward cycle the targeting reticle instead of navigating
-    // browser history away from the war
-    renderer.reticle = (parseInt(localStorage.getItem('atbolo-reticle') ?? '0', 10) || 0) % RETICLE_COUNT;
-    const cycleReticle = (dir: 1 | -1) => {
-      renderer.reticle = (renderer.reticle + dir + RETICLE_COUNT) % RETICLE_COUNT;
-      localStorage.setItem('atbolo-reticle', String(renderer.reticle));
-      hud.showToast(`reticle ${renderer.reticle + 1}/${RETICLE_COUNT}`, 1200);
+    // mouse back/forward adjust GUN RANGE (classic Bolo range control: lob
+    // shells short of walls, or reach back out to max) instead of navigating
+    // browser history away from the war. The server clamps to [1, SHELL_RANGE].
+    const RANGE_STEP = 0.5;
+    const adjustRange = (dir: 1 | -1) => {
+      const cur = state.me()?.gunRange ?? SHELL_RANGE;
+      const next = Math.max(1, Math.min(SHELL_RANGE, Math.round((cur + dir * RANGE_STEP) * 2) / 2));
+      net.send({ t: 'range', range: next });
+      hud.showToast(`gun range ${next} / ${SHELL_RANGE}`, 1100);
     };
     addEventListener('mousedown', (ev) => {
       if (ev.button === 3 || ev.button === 4) ev.preventDefault();
@@ -142,12 +151,15 @@ export class Input {
     addEventListener('mouseup', (ev) => {
       if (ev.button === 3) {
         ev.preventDefault();
-        cycleReticle(1);
+        adjustRange(-1);
       } else if (ev.button === 4) {
         ev.preventDefault();
-        cycleReticle(-1);
+        adjustRange(1);
       }
     });
+
+    // reticle style cycling lives on T
+    renderer.reticle = (parseInt(localStorage.getItem('atbolo-reticle') ?? '0', 10) || 0) % RETICLE_COUNT;
 
     // tap/click on the battlefield dispatches the builder with the selected
     // tool. Pointer events cover mouse and touch alike; a "tap" is a short

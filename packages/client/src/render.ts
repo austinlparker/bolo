@@ -168,7 +168,8 @@ export class Renderer {
     if (meInterp && meInterp.cur.alive) {
       const p = state.lerpTank(meInterp, now, TICK_MS);
       const cross = reticles[meInterp.cur.faction][this.reticle % RETICLE_COUNT];
-      const [cxs, cys] = toScreen(p.x + Math.cos(p.dir) * SHELL_RANGE, p.y + Math.sin(p.dir) * SHELL_RANGE);
+      const range = meInterp.cur.gunRange ?? SHELL_RANGE;
+      const [cxs, cys] = toScreen(p.x + Math.cos(p.dir) * range, p.y + Math.sin(p.dir) * range);
       const cs = this.scale * 0.85;
       ctx.save();
       ctx.globalAlpha = 0.75;
