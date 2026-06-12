@@ -28,7 +28,7 @@ export async function startSpectator(root: HTMLElement): Promise<void> {
   fit();
 
   const panel = document.createElement('div');
-  panel.className = 'spec-panel';
+  panel.className = 'spec-panel kpanel';
   // static skeleton: the nav links are rendered ONCE and never replaced —
   // rewriting them per frame destroyed the anchor mid-click, eating navigation
   panel.innerHTML = `

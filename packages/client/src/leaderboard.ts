@@ -158,7 +158,7 @@ function showProfileCard(root: HTMLElement, p: PlayerProfile, live?: BskyProfile
   const backdrop = document.createElement('div');
   backdrop.className = 'pcard-backdrop';
   backdrop.innerHTML = `
-    <div class="pcard">
+    <div class="pcard kpanel">
       <div class="pcard-head">
         ${
           live?.avatar

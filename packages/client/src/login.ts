@@ -61,7 +61,7 @@ export function showLogin(root: HTMLElement, initialError?: string): Promise<Cre
       ? `<button id="login-dev" class="secondary kbtn">dev login (local only)</button>`
       : '';
     overlay.innerHTML = `
-      <div class="login-box">
+      <div class="login-box kpanel">
         <h1>ATBOLO</h1>
         <div class="sub">the forever war · <span class="vs-dawn">DAWN</span> vs <span class="vs-dusk">DUSK</span></div>
         <label>bluesky / atproto handle</label>

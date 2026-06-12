@@ -81,8 +81,7 @@ canvas.game {
   box-shadow: 0 6px 22px rgba(0, 0, 0, 0.55);
 }
 
-.panel,
-.spec-panel {
+.panel {
   background: var(--panel);
   border: 1px solid var(--line);
   box-shadow:
@@ -134,15 +133,23 @@ canvas.game {
 }
 
 .login-box {
-  width: 440px;
+  width: 460px;
   max-width: 92vw;
-  border: 1px solid var(--line-bright);
-  background: var(--panel);
-  padding: 30px;
+  padding: 32px;
+  font-family: var(--font-chrome);
+}
+
+/* the metal frame replaces the old hairline border; keep the amber glow */
+.login-box.kpanel::before {
   box-shadow:
-    0 0 0 1px #000,
     0 0 60px rgba(232, 163, 61, 0.07),
     0 18px 50px rgba(0, 0, 0, 0.6);
+}
+
+/* handles and typeahead stay terminal-style */
+.login-box input,
+.typeahead-list {
+  font-family: var(--font-mono);
 }
 
 .login-box h1 {
@@ -555,17 +562,20 @@ canvas.game {
 /* ---------- spectator ---------- */
 .spec-panel {
   position: fixed;
-  top: 10px;
-  left: 10px;
-  padding: 12px 16px;
+  top: 12px;
+  left: 12px;
+  padding: 16px 18px;
   z-index: 10;
+  font-family: var(--font-chrome);
+  font-weight: 700;
   font-size: 12px;
   line-height: 1.8;
-  max-width: 330px;
+  max-width: 340px;
 }
 
 .spec-panel h2 {
-  font-size: 16px;
+  font-family: var(--font-display);
+  font-size: 18px;
   letter-spacing: 6px;
   margin-bottom: 4px;
   color: var(--dawn);
@@ -1253,6 +1263,7 @@ body.touch-mode #emote-toggle {
   inset: 0;
   overflow-y: auto;
   background: radial-gradient(ellipse at top, #141a26 0%, #07080c 70%);
+  font-family: var(--font-chrome);
 }
 
 .lb-inner {
@@ -1262,6 +1273,7 @@ body.touch-mode #emote-toggle {
 }
 
 .lb-inner h1 {
+  font-family: var(--font-display);
   font-size: 40px;
   letter-spacing: 12px;
   text-align: center;
@@ -1293,9 +1305,10 @@ body.touch-mode #emote-toggle {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 9px 14px;
+  padding: 10px 14px;
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 2px solid var(--line);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
 .lb-row:nth-child(1) { border-color: #d8b25a; }
@@ -1392,6 +1405,7 @@ body.touch-mode #emote-toggle {
 }
 
 .lb-history h2 {
+  font-family: var(--font-display);
   font-size: 13px;
   letter-spacing: 4px;
   color: var(--text);
@@ -1460,10 +1474,7 @@ body.touch-mode #hud-status .rank-chip {
 .pcard {
   width: 440px;
   max-width: 94vw;
-  background: var(--panel);
-  border: 1px solid var(--line-bright);
-  box-shadow: 0 0 0 1px #000, 0 18px 50px rgba(0, 0, 0, 0.7);
-  padding: 20px;
+  padding: 24px;
 }
 
 .pcard-head {
