@@ -15,7 +15,13 @@ const SEND_MIN_INTERVAL = 90; // ms between input messages while steering
 const EPSILON = 0.045;
 const AIM_DEADZONE = 0.25;
 const FIRE_DEFLECTION = 0.5; // push the stick past this to want fire
-const FIRE_CONE = 0.55; // radians of hull error within which we actually shoot
+// Radians of hull error within which we actually shoot. 0.55 released
+// shells up to ~31° off-axis — touch hit rate was 4% vs keyboard's 10%.
+const FIRE_CONE = 0.32;
+// Stop chasing sub-degree heading errors: the proportional controller runs
+// against a 10Hz snapshot a round-trip stale, so without a deadband it
+// oscillates around the target heading forever ("wobbly").
+const TURN_DEADBAND = 0.07;
 
 class Stick {
   x = 0;
@@ -122,7 +128,7 @@ export class TouchControls {
     if (gunMag > AIM_DEADZONE) {
       // combat steering: swing the hull onto the gun stick's bearing
       const delta = angleDelta(me.dir, this.gun.angle());
-      turn = Math.max(-1, Math.min(1, delta * 3));
+      turn = Math.abs(delta) < TURN_DEADBAND ? 0 : Math.max(-1, Math.min(1, delta * 2.2));
       const wantFire = gunMag > FIRE_DEFLECTION;
       fire = wantFire && Math.abs(delta) < FIRE_CONE;
       this.gun.setHot(fire);
@@ -130,7 +136,7 @@ export class TouchControls {
       accel = driveMag > 0.18 ? Math.min(1, driveMag) : 0;
     } else if (driveMag > 0.18) {
       const delta = angleDelta(me.dir, this.drive.angle());
-      turn = Math.max(-1, Math.min(1, delta * 2.4));
+      turn = Math.abs(delta) < TURN_DEADBAND ? 0 : Math.max(-1, Math.min(1, delta * 2.4));
       // ease off the throttle when the target heading is behind us
       accel = Math.min(1, driveMag) * (Math.abs(delta) > 2.1 ? 0.25 : 1);
     }

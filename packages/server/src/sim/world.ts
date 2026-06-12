@@ -58,6 +58,7 @@ import {
   TANK_MAX_SPEED,
   TICK_HZ,
   TREES_PER_FOREST_TILE,
+  WAR_MAX_MINUTES,
   WAR_MIN_MINUTES,
 } from '@bolo/shared';
 import {
@@ -101,6 +102,14 @@ export interface TankInput {
 export type StatEvent = { name: 'shot' | 'kill' } & Record<string, string | number | boolean | undefined>;
 
 const W = MAP_SIZE;
+
+/** Tread corner sample points for the road-shoulder speed check. */
+const TREAD_OFFSETS: [number, number][] = [
+  [TANK_RADIUS * 0.9, TANK_RADIUS * 0.9],
+  [TANK_RADIUS * 0.9, -TANK_RADIUS * 0.9],
+  [-TANK_RADIUS * 0.9, TANK_RADIUS * 0.9],
+  [-TANK_RADIUS * 0.9, -TANK_RADIUS * 0.9],
+];
 
 export class World {
   warNumber: number;
@@ -391,7 +400,7 @@ export class World {
     this.tickPills();
     this.tickBases();
 
-    const warEnded = warMinutes >= WAR_MIN_MINUTES ? this.checkVictory() : null;
+    const warEnded = warMinutes >= WAR_MIN_MINUTES ? this.checkVictory(warMinutes) : null;
 
     return {
       events: this.events,
@@ -438,7 +447,19 @@ export class World {
     if (tank.onBoat && onWater) {
       maxSpeed = BOAT_SPEED;
     } else {
-      maxSpeed = TANK_MAX_SPEED * TERRAIN[here].tankSpeed;
+      let terrainSpeed = TERRAIN[here].tankSpeed;
+      // road shoulder: keeping the hull centered on a 1-tile road is
+      // fiddly, so any road under the treads grants road speed (playtest:
+      // "I need to find the rules for using the roads!!!")
+      if (terrainSpeed > 0 && here !== Terrain.Road) {
+        for (const [ox, oy] of TREAD_OFFSETS) {
+          if (this.tileAt(tank.x + ox, tank.y + oy) === Terrain.Road) {
+            terrainSpeed = TERRAIN[Terrain.Road].tankSpeed;
+            break;
+          }
+        }
+      }
+      maxSpeed = TANK_MAX_SPEED * terrainSpeed;
     }
 
     // W drives forward; S brakes, then backs up at half speed; neither coasts.
@@ -840,9 +861,21 @@ export class World {
     }
   }
 
-  private checkVictory(): Faction | null {
+  private checkVictory(warMinutes: number): Faction | null {
+    // total conquest ends the war at any time (past WAR_MIN_MINUTES)
     for (const f of FACTIONS) {
       if (this.bases.every((b) => b.owner === f)) return f;
+    }
+    // past the cap, holding more bases wins; a tie is sudden death — the
+    // war continues until one faction takes the lead
+    if (warMinutes >= WAR_MAX_MINUTES) {
+      let dawn = 0;
+      let dusk = 0;
+      for (const b of this.bases) {
+        if (b.owner === 'dawn') dawn++;
+        else if (b.owner === 'dusk') dusk++;
+      }
+      if (dawn !== dusk) return dawn > dusk ? 'dawn' : 'dusk';
     }
     return null;
   }

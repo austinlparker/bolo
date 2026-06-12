@@ -39,6 +39,7 @@ console.log(`symmetry violations: ${asym}`);
 let totalEvents = 0;
 let kills = 0;
 let caps = 0;
+const shotOutcomes = new Map<string, number>();
 const start = Date.now();
 for (let tick = 0; tick < minutes * 60 * TICK_HZ; tick++) {
   if (tick % (TICK_HZ * 2) === 0) balanceNpcs(world);
@@ -47,6 +48,11 @@ for (let tick = 0; tick < minutes * 60 * TICK_HZ; tick++) {
   }
   const result = world.doTick(tick / (60 * TICK_HZ));
   totalEvents += result.events.length;
+  for (const s of result.stats) {
+    if (s.name === 'shot' && typeof s.outcome === 'string') {
+      shotOutcomes.set(s.outcome, (shotOutcomes.get(s.outcome) ?? 0) + 1);
+    }
+  }
   for (const e of result.events) {
     if (e.e === 'kill') kills++;
     if (e.e === 'base_captured') caps++;
@@ -68,3 +74,10 @@ const simTicks = world.tick;
 console.log(
   `done: ${simTicks} ticks in ${wallMs}ms (${((simTicks / wallMs) * 1000).toFixed(0)} ticks/sec — ${(simTicks / wallMs / TICK_HZ * 1000).toFixed(0)}x realtime), ${totalEvents} events`,
 );
+const totalShots = [...shotOutcomes.values()].reduce((a, b) => a + b, 0);
+if (totalShots > 0) {
+  const parts = [...shotOutcomes.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `${k} ${((n / totalShots) * 100).toFixed(0)}%`);
+  console.log(`shots: ${totalShots} (${parts.join(', ')})`);
+}
