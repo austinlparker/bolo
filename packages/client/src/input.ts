@@ -4,6 +4,7 @@ import type { Hud } from './hud';
 import { TOOLS } from './hud';
 import type { Net } from './net';
 import type { Renderer } from './render';
+import { RETICLE_COUNT } from './sprites';
 import type { GameState } from './state';
 
 /** One fine-aim tap turns this many radians (~2.9°); see InputMsg.nudge. */
@@ -125,6 +126,27 @@ export class Input {
       this.held.clear();
       this.heldSince.clear();
       send();
+    });
+
+    // mouse back/forward cycle the targeting reticle instead of navigating
+    // browser history away from the war
+    renderer.reticle = (parseInt(localStorage.getItem('atbolo-reticle') ?? '0', 10) || 0) % RETICLE_COUNT;
+    const cycleReticle = (dir: 1 | -1) => {
+      renderer.reticle = (renderer.reticle + dir + RETICLE_COUNT) % RETICLE_COUNT;
+      localStorage.setItem('atbolo-reticle', String(renderer.reticle));
+      hud.showToast(`reticle ${renderer.reticle + 1}/${RETICLE_COUNT}`, 1200);
+    };
+    addEventListener('mousedown', (ev) => {
+      if (ev.button === 3 || ev.button === 4) ev.preventDefault();
+    });
+    addEventListener('mouseup', (ev) => {
+      if (ev.button === 3) {
+        ev.preventDefault();
+        cycleReticle(1);
+      } else if (ev.button === 4) {
+        ev.preventDefault();
+        cycleReticle(-1);
+      }
     });
 
     // tap/click on the battlefield dispatches the builder with the selected

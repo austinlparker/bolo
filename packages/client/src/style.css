@@ -26,7 +26,10 @@
   --line-bright: #57617a;
   --text: #e4e9f4;
   --dim: #97a1ba;
-  --font-chrome: 'Kenney Future Narrow', 'Courier New', ui-monospace, monospace;
+  /* display: big ALL-CAPS headlines only — the sci-fi font is style, not body text */
+  --font-display: 'Kenney Future', 'Courier New', ui-monospace, monospace;
+  /* chrome: readable, heavy. labels, buttons, feed, toasts */
+  --font-chrome: Verdana, Tahoma, 'DejaVu Sans', sans-serif;
   --font-mono: 'Courier New', ui-monospace, monospace;
 }
 
@@ -116,7 +119,7 @@ canvas.game {
 /* boot/loading state shown while sprite art loads (no fallback art exists) */
 .boot-msg {
   color: var(--dim);
-  font-family: var(--font-chrome);
+  font-family: var(--font-display);
   font-size: 14px;
   letter-spacing: 4px;
   text-align: center;
@@ -143,7 +146,7 @@ canvas.game {
 }
 
 .login-box h1 {
-  font-family: var(--font-chrome);
+  font-family: var(--font-display);
   font-size: 46px;
   letter-spacing: 14px;
   text-align: center;
@@ -335,8 +338,9 @@ canvas.game {
   pointer-events: none;
   z-index: 10;
   font-family: var(--font-chrome);
-  font-size: 13px;
-  letter-spacing: 0.5px;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.3px;
 }
 
 #hud-status {
@@ -449,15 +453,19 @@ canvas.game {
 #hud-feed {
   top: 12px;
   right: 12px;
-  width: 300px;
+  width: 480px;
   text-align: right;
   color: var(--text);
   text-shadow: 1px 1px 0 #000, 0 0 6px rgba(0, 0, 0, 0.9);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 #hud-feed div {
-  margin-bottom: 3px;
+  margin-bottom: 7px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #hud-chat {
@@ -512,7 +520,7 @@ canvas.game {
   top: 28%;
   left: 50%;
   transform: translate(-50%, -50%);
-  font-family: var(--font-chrome);
+  font-family: var(--font-display);
   font-size: 30px;
   letter-spacing: 6px;
   text-shadow: 2px 2px 0 #000, 0 0 30px rgba(0, 0, 0, 0.8);
@@ -850,7 +858,7 @@ body.touch-mode #builder-ui {
   transform: translate(-50%, -50%);
   text-align: center;
   color: #e85d5d;
-  font-family: var(--font-chrome);
+  font-family: var(--font-display);
   font-size: 28px;
   letter-spacing: 6px;
   text-shadow: 2px 2px 0 #000, 0 0 26px rgba(0, 0, 0, 0.9);
@@ -1113,6 +1121,7 @@ body.touch-mode #banner small {
 }
 
 .help-box h2 {
+  font-family: var(--font-display);
   font-size: 22px;
   letter-spacing: 7px;
   color: var(--dawn);

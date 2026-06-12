@@ -78,6 +78,7 @@ export class Hud {
               <div class="help-row"><span>accelerate / reverse</span><span class="keys"><kbd>W</kbd> <kbd>S</kbd></span></div>
               <div class="help-row"><span>turn — <em>tap</em> for fine aim, hold to sweep</span><span class="keys"><kbd>A</kbd> <kbd>D</kbd></span></div>
               <div class="help-row"><span>fire</span><span class="keys"><kbd>space</kbd></span></div>
+              <div class="help-row"><span>cycle targeting reticle</span><span class="keys">mouse back / fwd</span></div>
               <h3>COMMS</h3>
               <div class="help-row"><span>chat</span><span class="keys"><kbd>enter</kbd></span></div>
               <div class="help-row"><span>emote</span><span class="keys"><kbd>E</kbd></span></div>
