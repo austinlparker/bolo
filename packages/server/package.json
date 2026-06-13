@@ -7,7 +7,8 @@
     "dev": "pnpm --filter @bolo/client build && wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "test": "vitest"
   },
   "dependencies": {
     "@bolo/shared": "workspace:*"
@@ -16,6 +17,7 @@
     "@cloudflare/workers-types": "^4.20250508.0",
     "tsx": "^4.22.4",
     "typescript": "^5.6.0",
+    "vitest": "^2",
     "wrangler": "^4.14.0"
   }
 }

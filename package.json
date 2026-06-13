@@ -7,11 +7,14 @@
     "typecheck": "pnpm -r typecheck",
     "dev": "pnpm --parallel -r dev",
     "build": "pnpm -r build",
-    "deploy": "pnpm --filter @bolo/client build && pnpm --filter @bolo/server run deploy"
+    "deploy": "pnpm --filter @bolo/client build && pnpm --filter @bolo/server run deploy",
+    "test": "pnpm --filter '@bolo/shared' --filter '@bolo/server' --filter '@bolo/client' --parallel test",
+    "test:run": "pnpm --filter '@bolo/shared' --filter '@bolo/server' --filter '@bolo/client' exec vitest run"
   },
   "packageManager": "pnpm@10.33.0",
   "devDependencies": {
     "@napi-rs/canvas": "^1.0.0",
-    "playwright": "^1.60.0"
+    "playwright": "^1.60.0",
+    "vitest": "^2"
   }
 }
