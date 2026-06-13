@@ -99,7 +99,32 @@ export interface TankInput {
 }
 
 /** A balance-tuning telemetry event, shipped by the DO (see stats.ts). */
-export type StatEvent = { name: 'shot' | 'kill' } & Record<string, string | number | boolean | undefined>;
+export interface ShotStat {
+  name: 'shot';
+  outcome: 'tank' | 'builder' | 'pill' | 'base' | 'wall' | 'expired';
+  shooter: 'tank' | 'pillbox';
+  shooter_npc?: boolean;
+  shooter_client?: string;
+  shooter_faction: string;
+  travel_tiles: number;
+  target_npc?: boolean;
+  target_client?: string;
+}
+
+export interface KillStat {
+  name: 'kill';
+  cause: 'shell' | 'mine' | 'pillbox' | 'sea';
+  ttk_s?: number;
+  victim_npc: boolean;
+  victim_client?: string;
+  victim_faction: string;
+  killer_npc?: boolean;
+  killer_client?: string;
+  killer_faction?: string;
+  kill_dist_tiles?: number;
+}
+
+export type StatEvent = ShotStat | KillStat;
 
 const W = MAP_SIZE;
 
@@ -594,7 +619,7 @@ export class World {
   // ---------- shells ----------
 
   /** One telemetry event per shell, emitted when it resolves (hit or expired). */
-  private shotResolved(shell: Shell, outcome: string, victim?: Tank): void {
+  private shotResolved(shell: Shell, outcome: ShotStat['outcome'], victim?: Tank): void {
     const fromPill = shell.ownerTank < 0;
     const shooter = fromPill ? undefined : this.tanks.get(shell.ownerTank);
     this.stats.push({
