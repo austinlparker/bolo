@@ -18,7 +18,7 @@ target scale — O(tens) of concurrent players — this is comfortably within a
 single DO's capacity (the headless smoke test runs the sim ~300–3000×
 realtime), and it buys us strict consistency with zero coordination.
 
-## The simulation (`server/src/sim/world.ts`)
+## The simulation (`server/src/sim/`)
 
 Pure TypeScript, no Workers APIs — testable headlessly (`pnpm --filter
 @bolo/server smoke <seed> <minutes>` runs whole NPC wars in seconds). The DO
@@ -34,6 +34,29 @@ The sim only ticks while at least one socket is connected. With nobody
 watching, the world freezes — which is fine for a persistent war, and means
 idle cost is zero. An alarm still rolls an intermission into the next war on
 schedule.
+
+### File structure
+
+The `World` class (`world.ts`) is a thin orchestrator that owns entity
+collections and per-tick accumulators, delegating simulation logic to six
+subsystem classes in `systems/`:
+
+| File | Responsibility |
+|---|---|
+| `world.ts` | Public API, entity state, tick orchestration, persistence |
+| `context.ts` | `SimContext` interface (shared mutable state view) |
+| `world-host.ts` | `WorldHost` interface (cross-system method delegation) |
+| `utils.ts` | `canBuildOn`, `clamp`, `clampInt`, `round2stat` |
+| `systems/tank-system.ts` | Tank physics: turn inertia, terrain speed, firing |
+| `systems/shell-system.ts` | Shell flight, collision, detonation, telemetry |
+| `systems/pill-system.ts` | Pillbox self-repair and autonomous fire |
+| `systems/base-system.ts` | Base refuel, capture, siege |
+| `systems/builder-system.ts` | Builder orders, lifecycle, movement |
+| `systems/damage-system.ts` | Damage, death, mines, tile transitions |
+
+Each system receives a `WorldHost` reference (the `World` instance) in its
+constructor, giving it read/write access to shared state and cross-system
+methods (damage, kill, setTerrain, etc.).
 
 ## Persistence
 
@@ -81,6 +104,10 @@ the nearest takeable base. Navigation is tile-level Dijkstra weighted by
 terrain speed with a coastline penalty, recomputed every ~4 s, plus local
 probe-and-veer steering and analog (fractional) turn control.
 
+All state (name counter, per-tank AI memories, A* scratch buffers) lives in
+an `NpcController` class instance, one per `GameDO`. Module-level facade
+functions (`balanceNpcs`, `npcThink`) remain for backward compatibility.
+
 Hard-won tuning notes, so nobody re-learns them:
 - waypoint "reached" radius must exceed the full-speed turn radius
   (v/ω ≈ 0.94 tiles) or tanks orbit waypoints forever;
@@ -101,10 +128,24 @@ the access JWT, which the server verifies by calling `getSession` on that
 PDS. Successful verification mints a 30-day HMAC-SHA256 session token
 (`SESSION_SECRET`), checked locally (no network) when a socket says hello.
 
+## GameDO collaborators (`server/src/do/`)
+
+`GameDO` (`game.ts`) is a thin Durable Object that owns storage and the tick
+loop, delegating to three collaborators:
+
+| File | Responsibility |
+|---|---|
+| `game.ts` | DO interface, fetch routing, socket accept, tick orchestration |
+| `session-store.ts` | Session tracking, broadcast/send plumbing |
+| `view-builder.ts` | Per-player/spectator view computation (welcome, state, spectate) |
+| `war-manager.ts` | Player profiles, war history, victory/new-war transitions |
+
 ## Scaling, if it ever matters
 
 Not needed at O(tens), but the seams are already there: the world is a
-single class keyed by DO name, so sharding to N islands (or a hex-grid of
-region DOs, Foxhole-style) is a routing change in the Worker; the spectator
-feed could move to a fan-out DO; per-player state messages could switch to
-binary frames. The protocol's `welcome`+delta design wouldn't change.
+single class keyed by DO name, and the NPC controller and all subsystems are
+per-instance (no module-global state), so sharding to N islands (or a
+hex-grid of region DOs, Foxhole-style) is a routing change in the Worker;
+the spectator feed could move to a fan-out DO; per-player state messages
+could switch to binary frames. The protocol's `welcome`+delta design
+wouldn't change.
