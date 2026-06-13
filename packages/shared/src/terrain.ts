@@ -25,47 +25,35 @@ export interface TerrainProps {
   builderSpeed: number;
   /** Shells pass over everything except buildings, which they destroy. */
   blocksShells: boolean;
+  /** What a shell does to this tile, or null/omitted for no change. */
+  shelled?: Terrain;
+  /** What a mine does to this tile; omit = Crater, explicit null = no change. */
+  mined?: Terrain | null;
 }
 
 export const TERRAIN: Record<Terrain, TerrainProps> = {
-  [Terrain.DeepSea]: { name: 'deep sea', tankSpeed: 0, builderSpeed: 0, blocksShells: false },
-  [Terrain.River]: { name: 'river', tankSpeed: 0.25, builderSpeed: 0.3, blocksShells: false },
+  [Terrain.DeepSea]: { name: 'deep sea', tankSpeed: 0, builderSpeed: 0, blocksShells: false, mined: null },
+  [Terrain.River]: { name: 'river', tankSpeed: 0.25, builderSpeed: 0.3, blocksShells: false, mined: null },
   [Terrain.Swamp]: { name: 'swamp', tankSpeed: 0.25, builderSpeed: 0.5, blocksShells: false },
   [Terrain.Crater]: { name: 'crater', tankSpeed: 0.25, builderSpeed: 0.5, blocksShells: false },
   [Terrain.Road]: { name: 'road', tankSpeed: 1.0, builderSpeed: 1.0, blocksShells: false },
-  [Terrain.Forest]: { name: 'forest', tankSpeed: 0.5, builderSpeed: 0.75, blocksShells: false },
+  [Terrain.Forest]: { name: 'forest', tankSpeed: 0.5, builderSpeed: 0.75, blocksShells: false, shelled: Terrain.Grass },
   [Terrain.Rubble]: { name: 'rubble', tankSpeed: 0.25, builderSpeed: 0.5, blocksShells: false },
   [Terrain.Grass]: { name: 'grass', tankSpeed: 0.75, builderSpeed: 1.0, blocksShells: false },
-  [Terrain.Building]: { name: 'building', tankSpeed: 0, builderSpeed: 0, blocksShells: true },
-  [Terrain.ShotBuilding]: { name: 'shot building', tankSpeed: 0.25, builderSpeed: 0.5, blocksShells: false },
-  [Terrain.BoatTile]: { name: 'boat', tankSpeed: 0.25, builderSpeed: 0.3, blocksShells: false },
+  [Terrain.Building]: { name: 'building', tankSpeed: 0, builderSpeed: 0, blocksShells: true, shelled: Terrain.ShotBuilding },
+  [Terrain.ShotBuilding]: { name: 'shot building', tankSpeed: 0.25, builderSpeed: 0.5, blocksShells: false, shelled: Terrain.Rubble },
+  [Terrain.BoatTile]: { name: 'boat', tankSpeed: 0.25, builderSpeed: 0.3, blocksShells: false, shelled: Terrain.River },
 };
 
 /** What a shell does to the tile it detonates on. Returns the new terrain, or null for no change. */
 export function shelledTerrain(t: Terrain): Terrain | null {
-  switch (t) {
-    case Terrain.Building:
-      return Terrain.ShotBuilding;
-    case Terrain.ShotBuilding:
-      return Terrain.Rubble;
-    case Terrain.Forest:
-      return Terrain.Grass;
-    case Terrain.BoatTile:
-      return Terrain.River;
-    default:
-      return null;
-  }
+  return TERRAIN[t].shelled ?? null;
 }
 
 /** What a mine explosion does to a tile: everything organic becomes a crater. */
 export function minedTerrain(t: Terrain): Terrain | null {
-  switch (t) {
-    case Terrain.DeepSea:
-    case Terrain.River:
-      return null;
-    default:
-      return Terrain.Crater;
-  }
+  const props = TERRAIN[t];
+  return 'mined' in props ? props.mined! : Terrain.Crater;
 }
 
 export function isWater(t: Terrain): boolean {
