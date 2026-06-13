@@ -5,53 +5,32 @@
  * The sim ticks at TICK_HZ only while at least one socket is connected;
  * with nobody watching, the world simply freezes in place (and an alarm
  * still fires to roll intermissions over into new wars).
+ *
+ * Responsibilities are delegated to three collaborators:
+ * - SessionStore: WebSocket session tracking + broadcast plumbing
+ * - ViewBuilder: per-player/spectator view computation
+ * - WarManager: profiles, war history, victory/new-war transitions
  */
 import {
-  bytesToBase64,
-  type Base,
   type BuilderOrderKind,
   type ClientMsg,
   EMOTE_COOLDOWN_MS,
   EMOTES,
   type Faction,
-  FACTIONS,
-  FOREST_HIDE_RANGE,
-  INTERMISSION_SECONDS,
-  MAP_SIZE,
-  MineState,
-  nextWarSeed,
-  type Pillbox,
-  PLAYER_VIEW_RADIUS,
   type PlayerProfile,
-  PROTOCOL_VERSION,
-  type ServerMsg,
   SPECTATOR_HZ,
-  type SpectateMsg,
-  type StateMsg,
-  type TankView,
-  Terrain,
   TICK_HZ,
   TICK_MS,
   type WarRecord,
-  type WelcomeMsg,
 } from '@bolo/shared';
 import { verifyToken } from '../auth';
 import { type Env, sessionSecret } from '../env';
-import { balanceNpcs, npcThink } from '../sim/npc';
+import { NpcController } from '../sim/npc';
 import { World } from '../sim/world';
 import { StatsSink } from '../stats';
-
-interface Session {
-  ws: WebSocket;
-  role: 'player' | 'spectator';
-  did?: string;
-  handle?: string;
-  tankId?: number;
-  /** spectators accumulate terrain deltas between their 1Hz frames */
-  pendingTerrain: [number, number, number][];
-  msgBudget: number;
-  lastEmoteAt: number;
-}
+import { SessionStore, type Session } from './session-store';
+import { ViewBuilder } from './view-builder';
+import { WarManager } from './war-manager';
 
 const PERSIST_EVERY_TICKS = TICK_HZ * 30;
 const MSG_BUDGET_PER_TICK = 8; // ~80 msgs/sec ceiling per connection
@@ -60,11 +39,10 @@ export class GameDO implements DurableObject {
   private state: DurableObjectState;
   private env: Env;
   private world: World | null = null;
-  private sessions = new Set<Session>();
-  private profiles = new Map<string, PlayerProfile>();
-  /** DIDs that actually fought in the current war (for warsFought/warsWon) */
-  private fighters = new Set<string>();
-  private history: WarRecord[] = [];
+  private store = new SessionStore();
+  private war = new WarManager();
+  private views = new ViewBuilder(this.store, this.war.profiles);
+  private npc = new NpcController();
   private phase: 'active' | 'intermission' = 'active';
   private nextWarAt: number | null = null;
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -78,6 +56,18 @@ export class GameDO implements DurableObject {
     this.loaded = this.load();
   }
 
+  private get profiles(): Map<string, PlayerProfile> {
+    return this.war.profiles;
+  }
+
+  private get fighters(): Set<string> {
+    return this.war.fighters;
+  }
+
+  private get history(): WarRecord[] {
+    return this.war.history;
+  }
+
   private async load(): Promise<void> {
     const [meta, terrain, mines, profiles, history] = await Promise.all([
       this.state.storage.get<Record<string, unknown>>('meta'),
@@ -86,13 +76,13 @@ export class GameDO implements DurableObject {
       this.state.storage.get<Record<string, PlayerProfile>>('profiles'),
       this.state.storage.get<WarRecord[]>('history'),
     ]);
-    if (profiles) this.profiles = new Map(Object.entries(profiles));
-    if (history) this.history = history;
+    if (profiles) this.war.profiles = new Map(Object.entries(profiles));
+    if (history) this.war.history = history;
     if (meta && terrain && mines) {
       this.phase = (meta.phase as 'active' | 'intermission') ?? 'active';
       this.nextWarAt = (meta.nextWarAt as number | null) ?? null;
-      this.fighters = new Set((meta.fighters as string[]) ?? []);
-      for (const prof of this.profiles.values()) prof.warsWon ??= 0;
+      this.war.fighters = new Set((meta.fighters as string[]) ?? []);
+      for (const prof of this.war.profiles.values()) prof.warsWon ??= 0;
       this.world = World.restore(meta.world as Record<string, unknown>, new Uint8Array(terrain), new Uint8Array(mines));
     } else {
       this.world = new World(1, (Date.now() ^ 0xb010b010) >>> 0);
@@ -106,13 +96,13 @@ export class GameDO implements DurableObject {
       meta: {
         phase: this.phase,
         nextWarAt: this.nextWarAt,
-        fighters: [...this.fighters],
+        fighters: [...this.war.fighters],
         world: this.world.serializeMeta(),
       },
       terrain: this.world.terrain,
       mines: this.world.mines,
-      profiles: Object.fromEntries(this.profiles),
-      history: this.history,
+      profiles: Object.fromEntries(this.war.profiles),
+      history: this.war.history,
     });
   }
 
@@ -136,26 +126,24 @@ export class GameDO implements DurableObject {
         history?: WarRecord[];
       };
       for (const p of body.profiles ?? []) {
-        if (typeof p?.did === 'string') this.profiles.set(p.did, { ...p, warsWon: p.warsWon ?? 0 });
+        if (typeof p?.did === 'string') this.war.profiles.set(p.did, { ...p, warsWon: p.warsWon ?? 0 });
       }
-      if (body.history) this.history.push(...body.history);
+      if (body.history) this.war.history.push(...body.history);
       await this.persist();
-      return Response.json({ ok: true, profiles: this.profiles.size });
+      return Response.json({ ok: true, profiles: this.war.profiles.size });
     }
 
     if (url.pathname === '/status') {
       const world = this.world!;
-      let players = 0;
-      let spectators = 0;
-      for (const s of this.sessions) (s.role === 'player' ? players++ : spectators++);
-      const leaderboard = [...this.profiles.values()]
+      const { players, spectators } = this.store.playerSpectatorCounts();
+      const leaderboard = [...this.war.profiles.values()]
         .filter((p) => p.kills + p.caps > 0)
         .sort((a, b) => b.kills + b.caps * 3 - (a.kills + a.caps * 3))
         .slice(0, 50);
       return Response.json({
         war: world.warInfo(this.phase, this.nextWarAt),
         online: { players, spectators },
-        history: this.history.slice(-20).reverse(),
+        history: this.war.history.slice(-20).reverse(),
         leaderboard,
       });
     }
@@ -191,12 +179,12 @@ export class GameDO implements DurableObject {
       try {
         msg = JSON.parse(typeof ev.data === 'string' ? ev.data : '') as ClientMsg;
       } catch {
-        this.send(session, { t: 'error', code: 'bad_message', msg: 'invalid JSON' });
+        this.store.send(session, { t: 'error', code: 'bad_message', msg: 'invalid JSON' });
         return;
       }
       if (!helloed) {
         if (msg.t !== 'hello') {
-          this.send(session, { t: 'error', code: 'bad_message', msg: 'expected hello' });
+          this.store.send(session, { t: 'error', code: 'bad_message', msg: 'expected hello' });
           ws.close(1002, 'expected hello');
           return;
         }
@@ -209,14 +197,14 @@ export class GameDO implements DurableObject {
     });
 
     const drop = () => {
-      if (!this.sessions.has(session)) return;
-      this.sessions.delete(session);
+      if (!this.store.has(session)) return;
+      this.store.remove(session);
       if (session.tankId !== undefined) {
         const tank = this.world?.tanks.get(session.tankId);
-        if (tank) this.foldStats(tank);
+        if (tank) this.war.foldStats(tank);
         this.world?.removeTank(session.tankId);
       }
-      if (this.sessions.size === 0) {
+      if (this.store.size === 0) {
         this.stopTicking();
         void this.persist();
       }
@@ -235,17 +223,17 @@ export class GameDO implements DurableObject {
     if (role === 'player') {
       const payload = token ? await verifyToken(sessionSecret(this.env), token) : null;
       if (!payload) {
-        this.send(session, { t: 'error', code: 'auth_failed', msg: 'invalid or expired token' });
+        this.store.send(session, { t: 'error', code: 'auth_failed', msg: 'invalid or expired token' });
         session.ws.close(4001, 'auth failed');
         return;
       }
       // one connection per identity: the newest wins
-      for (const other of this.sessions) {
+      for (const other of this.store) {
         if (other.did === payload.did) {
           other.ws.close(4000, 'signed in from another connection');
         }
       }
-      const profile = this.getOrCreateProfile(payload.did, payload.handle);
+      const profile = this.war.getOrCreateProfile(payload.did, payload.handle, this.store);
       profile.handle = payload.handle;
       profile.lastSeen = Date.now();
       session.role = 'player';
@@ -255,74 +243,28 @@ export class GameDO implements DurableObject {
         const clientKind = client === 'keyboard' || client === 'touch' || client === 'bot' ? client : 'unknown';
         const tank = world.addTank(payload.did, payload.handle, profile.faction, false, clientKind);
         session.tankId = tank.id;
-        this.fighters.add(payload.did);
+        this.war.fighters.add(payload.did);
       }
     } else {
       session.role = 'spectator';
     }
-    this.sessions.add(session);
-    this.send(session, this.welcomeFor(session));
-    this.broadcastChat('system', `${session.handle ?? 'a spectator'} ${role === 'player' ? 'joined the war' : 'is watching'}`);
+    this.store.add(session);
+    this.store.send(session, this.views.welcomeFor(world, session, this.phase, this.nextWarAt));
+    this.store.broadcastChat('system', `${session.handle ?? 'a spectator'} ${role === 'player' ? 'joined the war' : 'is watching'}`);
     this.startTicking();
-  }
-
-  private getOrCreateProfile(did: string, handle: string): PlayerProfile {
-    let profile = this.profiles.get(did);
-    if (!profile) {
-      // auto-balance: join the faction with fewer humans online, then fewer veterans
-      const online: Record<Faction, number> = { dawn: 0, dusk: 0 };
-      for (const s of this.sessions) {
-        if (s.role === 'player' && s.did) {
-          const f = this.profiles.get(s.did)?.faction;
-          if (f) online[f]++;
-        }
-      }
-      const totals: Record<Faction, number> = { dawn: 0, dusk: 0 };
-      for (const p of this.profiles.values()) totals[p.faction]++;
-      let faction: Faction;
-      if (online.dawn !== online.dusk) faction = online.dawn < online.dusk ? 'dawn' : 'dusk';
-      else if (totals.dawn !== totals.dusk) faction = totals.dawn < totals.dusk ? 'dawn' : 'dusk';
-      else faction = FACTIONS[Math.floor(Math.random() * 2)];
-      profile = {
-        did,
-        handle,
-        faction,
-        isBot: false,
-        kills: 0,
-        deaths: 0,
-        caps: 0,
-        warsFought: 0,
-        warsWon: 0,
-        firstSeen: Date.now(),
-        lastSeen: Date.now(),
-      };
-      this.profiles.set(did, profile);
-    }
-    return profile;
-  }
-
-  private foldStats(tank: { did: string; kills: number; deaths: number; caps: number }): void {
-    const profile = this.profiles.get(tank.did);
-    if (!profile) return;
-    profile.kills += tank.kills;
-    profile.deaths += tank.deaths;
-    profile.caps += tank.caps;
-    tank.kills = 0;
-    tank.deaths = 0;
-    tank.caps = 0;
   }
 
   private handleMessage(session: Session, msg: ClientMsg): void {
     const world = this.world!;
     if (msg.t === 'ping') {
-      this.send(session, { t: 'pong', n: msg.n });
+      this.store.send(session, { t: 'pong', n: msg.n });
       return;
     }
     if (msg.t === 'chat') {
       const text = String(msg.text ?? '').slice(0, 240);
       if (!text.trim()) return;
       const faction = session.did ? this.profiles.get(session.did)?.faction ?? 'system' : 'system';
-      this.broadcastChat(session.handle ?? 'spectator', text, faction);
+      this.store.broadcastChat(session.handle ?? 'spectator', text, faction);
       return;
     }
     if (msg.t === 'emote') {
@@ -332,11 +274,11 @@ export class GameDO implements DurableObject {
       const now = Date.now();
       if (now - session.lastEmoteAt < EMOTE_COOLDOWN_MS) return;
       session.lastEmoteAt = now;
-      this.broadcast({ t: 'emoted', tankId: session.tankId, kind });
+      this.store.broadcast({ t: 'emoted', tankId: session.tankId, kind });
       return;
     }
     if (session.role !== 'player' || session.tankId === undefined || this.phase !== 'active') {
-      this.send(session, { t: 'error', code: 'not_in_game', msg: 'not an active player' });
+      this.store.send(session, { t: 'error', code: 'not_in_game', msg: 'not an active player' });
       return;
     }
     switch (msg.t) {
@@ -358,7 +300,7 @@ export class GameDO implements DurableObject {
           Math.floor(msg.x),
           Math.floor(msg.y),
         );
-        if (err) this.send(session, { t: 'error', code: 'invalid_order', msg: err });
+        if (err) this.store.send(session, { t: 'error', code: 'invalid_order', msg: err });
         break;
       }
       case 'builder_recall':
@@ -371,7 +313,7 @@ export class GameDO implements DurableObject {
         world.respawn(session.tankId, typeof msg.baseId === 'number' ? msg.baseId : undefined);
         break;
       default:
-        this.send(session, { t: 'error', code: 'bad_message', msg: `unknown message type` });
+        this.store.send(session, { t: 'error', code: 'bad_message', msg: `unknown message type` });
     }
   }
 
@@ -396,7 +338,7 @@ export class GameDO implements DurableObject {
 
   private tick(counter: number): void {
     const world = this.world!;
-    for (const s of this.sessions) s.msgBudget = MSG_BUDGET_PER_TICK;
+    for (const s of this.store) s.msgBudget = MSG_BUDGET_PER_TICK;
 
     if (this.phase === 'intermission') {
       if (this.nextWarAt && Date.now() >= this.nextWarAt) {
@@ -406,17 +348,16 @@ export class GameDO implements DurableObject {
     }
 
     // garrison AI
-    if (counter % (TICK_HZ * 2) === 0) balanceNpcs(world);
+    if (counter % (TICK_HZ * 2) === 0) this.npc.balanceNpcs(world);
     for (const tank of world.tanks.values()) {
-      if (tank.npc) world.setInput(tank.id, npcThink(world, tank));
+      if (tank.npc) world.setInput(tank.id, this.npc.think(world, tank));
     }
 
     const warMinutes = (Date.now() - world.startedAt) / 60000;
     const result = world.doTick(warMinutes);
 
     if (this.statsSink.enabled && result.stats.length) {
-      let players = 0;
-      for (const s of this.sessions) if (s.role === 'player') players++;
+      const { players } = this.store.playerSpectatorCounts();
       for (const ev of result.stats) {
         this.statsSink.push({
           ...ev,
@@ -435,27 +376,27 @@ export class GameDO implements DurableObject {
       terrain: result.terrainChanges.length ? result.terrainChanges : undefined,
       events: result.events.length ? result.events : undefined,
     };
-    for (const session of this.sessions) {
+    for (const session of this.store) {
       if (session.role === 'spectator') {
         session.pendingTerrain.push(...result.terrainChanges);
         continue;
       }
-      this.send(session, this.stateFor(session, result.mineChanges, stateBase));
+      this.store.send(session, this.views.stateFor(world, session, result.mineChanges, stateBase));
     }
 
     // spectator frames at SPECTATOR_HZ; most spectators get byte-identical
     // frames, so serialize the terrain-free variant once
     if (counter % Math.round(TICK_HZ / SPECTATOR_HZ) === 0) {
-      const frame = this.spectateFrame();
+      const frame = this.views.spectateFrame(world, this.phase, this.nextWarAt);
       let plainRaw: string | null = null;
-      for (const session of this.sessions) {
+      for (const session of this.store) {
         if (session.role !== 'spectator') continue;
         if (session.pendingTerrain.length) {
-          this.send(session, { ...frame, terrain: session.pendingTerrain });
+          this.store.send(session, { ...frame, terrain: session.pendingTerrain });
           session.pendingTerrain = [];
         } else {
           plainRaw ??= JSON.stringify(frame);
-          this.sendRaw(session, plainRaw);
+          this.store.sendRaw(session, plainRaw);
         }
       }
     }
@@ -473,208 +414,25 @@ export class GameDO implements DurableObject {
 
   private endWar(winner: Faction): void {
     const world = this.world!;
-    const record: WarRecord = {
-      warNumber: world.warNumber,
-      seed: world.seed,
-      winner,
-      startedAt: world.startedAt,
-      endedAt: Date.now(),
-      durationMinutes: Math.round((Date.now() - world.startedAt) / 60000),
-    };
-    this.history.push(record);
-    // credit only the people who actually fought in this war
-    for (const did of this.fighters) {
-      const p = this.profiles.get(did);
-      if (!p) continue;
-      p.warsFought++;
-      if (p.faction === winner) p.warsWon++;
-    }
-    for (const tank of world.tanks.values()) if (!tank.npc) this.foldStats(tank);
+    const { nextWarAt } = this.war.endWar(world, winner, this.store);
     this.phase = 'intermission';
-    this.nextWarAt = Date.now() + INTERMISSION_SECONDS * 1000;
-    this.broadcast({ t: 'war_over', winner, record, nextWarAt: this.nextWarAt });
-    void this.persist();
+    this.nextWarAt = nextWarAt;
     void this.state.storage.setAlarm(this.nextWarAt);
+    void this.persist();
   }
 
   private startNewWar(): void {
     const old = this.world!;
-    const seed = nextWarSeed(old.seed, old.warNumber + 1);
-    this.world = new World(old.warNumber + 1, seed);
+    this.world = this.war.startNewWar(old, this.store);
     this.phase = 'active';
     this.nextWarAt = null;
-    // re-seat connected players in fresh tanks
-    for (const session of this.sessions) {
-      if (session.role === 'player' && session.did && session.handle) {
-        const profile = this.getOrCreateProfile(session.did, session.handle);
-        const tank = this.world.addTank(session.did, session.handle, profile.faction, false);
-        session.tankId = tank.id;
-        this.fighters.add(session.did);
-      }
-    }
-    balanceNpcs(this.world);
-    this.broadcast({ t: 'new_war', war: this.world.warInfo('active', null) });
-    for (const session of this.sessions) {
-      this.send(session, this.welcomeFor(session));
+    this.npc.balanceNpcs(this.world);
+    this.store.broadcast({ t: 'new_war', war: this.world.warInfo('active', null) });
+    for (const session of this.store) {
+      this.store.send(session, this.views.welcomeFor(this.world, session, this.phase, this.nextWarAt));
     }
     void this.persist();
   }
-
-  // ---------- message builders ----------
-
-  private welcomeFor(session: Session): WelcomeMsg {
-    const world = this.world!;
-    const faction = session.did ? this.profiles.get(session.did)?.faction : undefined;
-    const visibleMines: [number, number][] = [];
-    if (faction) {
-      const mineVal = faction === 'dawn' ? MineState.Dawn : MineState.Dusk;
-      for (let y = 0; y < MAP_SIZE; y++) {
-        for (let x = 0; x < MAP_SIZE; x++) {
-          if (world.mines[y * MAP_SIZE + x] === mineVal) visibleMines.push([x, y]);
-        }
-      }
-    }
-    return {
-      t: 'welcome',
-      v: PROTOCOL_VERSION,
-      you:
-        session.role === 'player' && session.did && session.handle && faction && session.tankId !== undefined
-          ? { did: session.did, handle: session.handle, faction, tankId: session.tankId }
-          : null,
-      profile: session.did ? this.profiles.get(session.did) : undefined,
-      war: world.warInfo(this.phase, this.nextWarAt),
-      map: { w: MAP_SIZE, h: MAP_SIZE, terrain: bytesToBase64(world.terrain) },
-      mines: visibleMines,
-      pills: world.pills,
-      bases: world.bases,
-      tick: world.tick,
-    };
-  }
-
-  private stateFor(
-    session: Session,
-    mineChanges: [number, number, number][],
-    base: { pills?: Pillbox[]; bases?: Base[]; terrain?: [number, number, number][]; events?: StateMsg['events'] },
-  ): StateMsg {
-    const world = this.world!;
-    const me = session.tankId !== undefined ? world.tanks.get(session.tankId) : undefined;
-    const faction = me?.faction;
-    const vx = me?.x ?? MAP_SIZE / 2;
-    const vy = me?.y ?? MAP_SIZE / 2;
-
-    const tanks: TankView[] = [];
-    const builders: StateMsg['builders'] = [];
-    for (const tank of world.tanks.values()) {
-      const d = Math.hypot(tank.x - vx, tank.y - vy);
-      if (d > PLAYER_VIEW_RADIUS && tank.id !== session.tankId) continue;
-      // forest concealment: enemies deep in the trees vanish from your feed
-      if (
-        faction &&
-        tank.faction !== faction &&
-        tank.alive &&
-        world.tileAt(tank.x, tank.y) === Terrain.Forest &&
-        d > FOREST_HIDE_RANGE
-      ) {
-        continue;
-      }
-      const view: TankView = {
-        id: tank.id,
-        handle: tank.handle,
-        faction: tank.faction,
-        npc: tank.npc,
-        x: round2(tank.x),
-        y: round2(tank.y),
-        dir: round2(tank.dir),
-        speed: round2(tank.speed),
-        alive: tank.alive,
-        onBoat: tank.onBoat,
-      };
-      if (tank.id === session.tankId) {
-        view.armor = tank.armor;
-        view.shells = tank.shells;
-        view.mines = tank.mines;
-        view.trees = tank.trees;
-        view.carriedPill = tank.carriedPill;
-        view.gunRange = tank.gunRange;
-        if (!tank.alive) {
-          view.respawnIn = Math.max(0, Math.ceil((tank.respawnTick - world.tick) / TICK_HZ));
-        }
-        view.kills = tank.kills;
-        view.caps = tank.caps;
-      }
-      tanks.push(view);
-      const b = tank.builder;
-      if (b.phase !== 'in_tank' && b.phase !== 'dead') {
-        builders.push({ tankId: tank.id, faction: tank.faction, phase: b.phase, x: round2(b.x), y: round2(b.y) });
-      }
-    }
-
-    const shells = world.shells
-      .filter((s) => Math.hypot(s.x - vx, s.y - vy) <= PLAYER_VIEW_RADIUS)
-      .map((s) => ({ id: s.id, x: round2(s.x), y: round2(s.y), dir: round2(s.dir), f: s.faction }));
-
-    // mine intel: removals are public (the crater is right there); placements only to the owning faction
-    let mines: [number, number, 0 | 1][] | undefined;
-    if (mineChanges.length) {
-      const mineVal = faction === 'dawn' ? MineState.Dawn : MineState.Dusk;
-      const visible = mineChanges
-        .filter(([, , m]) => m === MineState.None || m === mineVal)
-        .map(([x, y, m]) => [x, y, m === MineState.None ? 0 : 1] as [number, number, 0 | 1]);
-      if (visible.length) mines = visible;
-    }
-
-    return { t: 'state', tick: world.tick, tanks, shells, builders, mines, ...base };
-  }
-
-  private spectateFrame(): SpectateMsg {
-    const world = this.world!;
-    let players = 0;
-    let spectators = 0;
-    for (const s of this.sessions) (s.role === 'player' ? players++ : spectators++);
-    return {
-      t: 'spectate',
-      tick: world.tick,
-      war: world.warInfo(this.phase, this.nextWarAt),
-      tanks: [...world.tanks.values()].map((t) => ({
-        x: round2(t.x),
-        y: round2(t.y),
-        faction: t.faction,
-        handle: t.handle,
-        npc: t.npc,
-        alive: t.alive,
-      })),
-      pills: world.pills,
-      bases: world.bases,
-      online: { players, spectators },
-    };
-  }
-
-  // ---------- plumbing ----------
-
-  private send(session: Session, msg: ServerMsg): void {
-    this.sendRaw(session, JSON.stringify(msg));
-  }
-
-  private sendRaw(session: Session, raw: string): void {
-    try {
-      session.ws.send(raw);
-    } catch {
-      // socket already closing; the close handler cleans up
-    }
-  }
-
-  private broadcast(msg: ServerMsg): void {
-    const raw = JSON.stringify(msg); // serialize once, not once per socket
-    for (const s of this.sessions) this.sendRaw(s, raw);
-  }
-
-  private broadcastChat(from: string, text: string, faction: Faction | 'system' = 'system'): void {
-    this.broadcast({ t: 'chat', from, faction, text });
-  }
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 function clamp1(n: unknown): number {
