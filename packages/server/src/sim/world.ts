@@ -19,14 +19,20 @@ import {
   type Pillbox,
   type Shell,
   type Tank,
+  type TankTuning,
   type WarInfo,
+  BASE_MAX_HP,
+  BASE_NEUTRAL_START_HP,
+  DEFAULT_TANK_TUNING,
+  DOMINANCE_BASES,
+  DOMINANCE_MINUTES,
   FACTIONS,
   SHELL_RANGE,
   TANK_START_ARMOR,
   TANK_START_MINES,
   TANK_START_SHELLS,
   TICK_HZ,
-  WAR_MAX_MINUTES,
+  TICK_MS,
   WAR_MIN_MINUTES,
 } from '@bolo/shared';
 import {
@@ -108,12 +114,21 @@ export class World implements WorldHost {
   tanks = new Map<number, Tank>();
   shells: Shell[] = [];
 
+  /** Tank-handling parameters (defaults from constants); the /rig dev tool
+   * overrides them per-pane to compare handling variants. */
+  readonly tuning: TankTuning = { ...DEFAULT_TANK_TUNING };
+
   nextId = 1;
   inputs = new Map<number, TankInput>();
-  /** queued fine-aim rotation per tank, drained at TANK_TURN_RATE (see addNudge) */
+  /** queued fine-aim rotation per tank, drained at the turn-rate cap (see addNudge) */
   nudges = new Map<number, number>();
   refuelTimers = new Map<number, number>(); // baseId -> seconds until next transfer
   regenTimers = new Map<number, number>();
+  fortifyTimers = new Map<number, number>();
+
+  // dominance-victory bookkeeping (see checkVictory)
+  private dominantFaction: Faction | null = null;
+  private dominantSinceTick = 0;
 
   // accumulated during a tick
   events: GameEvent[] = [];
@@ -217,6 +232,14 @@ export class World implements WorldHost {
       phase,
       nextWarAt,
       baseCounts: counts,
+      dominance: this.dominantFaction
+        ? {
+            faction: this.dominantFaction,
+            endsAt:
+              Date.now() +
+              (DOMINANCE_MINUTES * 60 * TICK_HZ - (this.tick - this.dominantSinceTick)) * TICK_MS,
+          }
+        : null,
     };
   }
 
@@ -273,7 +296,15 @@ export class World implements WorldHost {
   }
 
   setInput(id: number, input: TankInput): void {
-    if (this.tanks.has(id)) this.inputs.set(id, input);
+    if (!this.tanks.has(id)) return;
+    // Sanitize at the sim boundary: input arrives from the network and from
+    // NPC steering math, either of which can produce NaN/out-of-range values
+    // that would otherwise poison tank.dir/speed for the rest of the war.
+    this.inputs.set(id, {
+      accel: clamp(Number.isFinite(input.accel) ? input.accel : 0, -1, 1),
+      turn: clamp(Number.isFinite(input.turn) ? input.turn : 0, -1, 1),
+      fire: !!input.fire,
+    });
   }
 
   /** Classic Bolo range control: shells detonate at this distance. */
@@ -357,9 +388,9 @@ export class World implements WorldHost {
     }
     this.shellSys.tick();
     this.pillSys.tick();
-    this.baseSys.tick();
+    this.baseSys.tick(warMinutes);
 
-    const warEnded = warMinutes >= WAR_MIN_MINUTES ? this.checkVictory(warMinutes) : null;
+    const warEnded = warMinutes >= WAR_MIN_MINUTES ? this.checkVictory() : null;
 
     return {
       events: this.events,
@@ -372,21 +403,42 @@ export class World implements WorldHost {
     };
   }
 
-  private checkVictory(warMinutes: number): Faction | null {
+  /** Fortifications breached: the base stands neutral until someone claims it. */
+  neutralizeBase(base: Base, by: Owner): void {
+    base.owner = 'neutral';
+    base.hp = 0;
+    this.basesChanged = true;
+    this.events.push({ e: 'base_neutralized', baseId: base.id, by });
+  }
+
+  /**
+   * Wars end by conquest only. DOMINANCE breaks the endgame turtle: a faction
+   * holding >= DOMINANCE_BASES starts a visible countdown and wins after
+   * DOMINANCE_MINUTES unless the grip is broken.
+   */
+  private checkVictory(): Faction | null {
     // total conquest ends the war at any time (past WAR_MIN_MINUTES)
     for (const f of FACTIONS) {
       if (this.bases.every((b) => b.owner === f)) return f;
     }
-    // past the cap, holding more bases wins; a tie is sudden death — the
-    // war continues until one faction takes the lead
-    if (warMinutes >= WAR_MAX_MINUTES) {
-      let dawn = 0;
-      let dusk = 0;
-      for (const b of this.bases) {
-        if (b.owner === 'dawn') dawn++;
-        else if (b.owner === 'dusk') dusk++;
-      }
-      if (dawn !== dusk) return dawn > dusk ? 'dawn' : 'dusk';
+
+    let leader: Faction | null = null;
+    for (const f of FACTIONS) {
+      let held = 0;
+      for (const b of this.bases) if (b.owner === f) held++;
+      if (held >= DOMINANCE_BASES) leader = f;
+    }
+    if (leader !== this.dominantFaction) {
+      this.dominantFaction = leader;
+      this.dominantSinceTick = this.tick;
+      this.events.push({
+        e: 'dominance',
+        faction: leader,
+        endsAt: leader ? Date.now() + DOMINANCE_MINUTES * 60_000 : null,
+      });
+    }
+    if (this.dominantFaction && this.tick - this.dominantSinceTick >= DOMINANCE_MINUTES * 60 * TICK_HZ) {
+      return this.dominantFaction;
     }
     return null;
   }
@@ -402,6 +454,8 @@ export class World implements WorldHost {
       nextId: this.nextId,
       bases: this.bases,
       pills: this.pills,
+      dominantFaction: this.dominantFaction,
+      dominantSinceTick: this.dominantSinceTick,
     };
   }
 
@@ -411,6 +465,12 @@ export class World implements WorldHost {
     w.nextId = meta.nextId as number;
     w.bases = meta.bases as Base[];
     w.pills = meta.pills as Pillbox[];
+    w.dominantFaction = (meta.dominantFaction as Faction | null) ?? null;
+    w.dominantSinceTick = (meta.dominantSinceTick as number) ?? 0;
+    // migrate pre-fortification saves: grant owned bases full hp
+    for (const b of w.bases) {
+      b.hp ??= b.owner === 'neutral' ? BASE_NEUTRAL_START_HP : BASE_MAX_HP;
+    }
     w.terrain = terrain;
     w.mines = mines;
     return w;

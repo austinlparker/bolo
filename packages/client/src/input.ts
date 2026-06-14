@@ -7,10 +7,25 @@ import type { Renderer } from './render';
 import type { Sound } from './sound';
 import type { GameState } from './state';
 
-/** One fine-aim tap turns this many radians (~2.9°); see InputMsg.nudge. */
-const FINE_NUDGE = 0.05;
-/** A turn key held longer than this becomes continuous full-rate turning. */
-const HOLD_MS = 170;
+export interface KeyboardTuning {
+  /** radians per fine-aim tap; see InputMsg.nudge */
+  fineNudge: number;
+  /** a turn key held longer than this becomes continuous full-rate turning */
+  holdMs: number;
+  /** cruise units changed per second while W/S (throttle up/down) is held */
+  throttleRate: number;
+}
+
+// fineNudge was 0.05 (~2.9°) but one tap drifted aim nearly half a tile at
+// max gun range — playtest: "fine adjustment is too sensitive on keyboard".
+export const DEFAULT_KEYBOARD_TUNING: KeyboardTuning = {
+  fineNudge: 0.03,
+  holdMs: 170,
+  throttleRate: 1.3,
+};
+
+/** Live values; the dev tuning panel mutates this object in place. */
+export const KEYBOARD_TUNING: KeyboardTuning = { ...DEFAULT_KEYBOARD_TUNING };
 
 const TURN_KEYS: Record<string, -1 | 1> = { KeyA: -1, ArrowLeft: -1, KeyD: 1, ArrowRight: 1 };
 
@@ -18,8 +33,20 @@ export class Input {
   private held = new Set<string>();
   private heldSince = new Map<string, number>();
   private last: InputMsg = { t: 'input', accel: 0, turn: 0, fire: false };
+  /** persistent throttle (cruise) in [-1, 1]; W/S nudge it, it holds; X stops. */
+  private cruise = 0;
+  private lastNow = 0;
+  private gameState: GameState;
+  private doSend!: () => void;
+  /**
+   * Re-send current control state. Input is change-driven, so after a
+   * reconnect (the server seats a brand-new zero-input tank) a held key
+   * would be ignored until physically re-pressed. Wired to net.onOpen.
+   */
+  resync!: () => void;
 
   constructor(net: Net, renderer: Renderer, hud: Hud, state: GameState, sound: Sound) {
+    this.gameState = state;
     // full-keyboard builder dispatch: G sends him to the gun cursor (where
     // your shells land), V builds on the tile under the tank
     const dispatchBuilder = (atCursor: boolean) => {
@@ -37,10 +64,11 @@ export class Input {
     // continuous turning (otherwise one 10Hz server tick of full-rate turn
     // — 18° — is the smallest possible aim adjustment)
     const heldPast = (code: string) =>
-      this.held.has(code) && performance.now() - (this.heldSince.get(code) ?? 0) >= HOLD_MS;
+      this.held.has(code) && performance.now() - (this.heldSince.get(code) ?? 0) >= KEYBOARD_TUNING.holdMs;
 
     const send = (nudge?: number) => {
-      const accel = this.held.has('KeyW') || this.held.has('ArrowUp') ? 1 : this.held.has('KeyS') || this.held.has('ArrowDown') ? -1 : 0;
+      // accel is the held cruise level (integrated in tick), not momentary W/S
+      const accel = Math.round(this.cruise * 100) / 100;
       const left = heldPast('KeyA') || heldPast('ArrowLeft');
       const right = heldPast('KeyD') || heldPast('ArrowRight');
       const turn = left && !right ? -1 : right && !left ? 1 : 0;
@@ -52,6 +80,15 @@ export class Input {
         if (nudge !== undefined) msg.nudge = nudge;
         net.send(msg);
       }
+    };
+
+    this.doSend = send;
+
+    // NaN sentinel guarantees the next send differs (NaN !== anything), forcing
+    // a resend of whatever is currently held even if the values are unchanged.
+    this.resync = () => {
+      this.last = { t: 'input', accel: NaN, turn: 0, fire: false };
+      send();
     };
 
     addEventListener('keydown', (ev) => {
@@ -112,13 +149,18 @@ export class Input {
         dispatchBuilder(false);
         return;
       }
+      if (ev.code === 'KeyX' && !ev.repeat) {
+        this.cruise = 0; // emergency stop: zero the held throttle
+        this.doSend();
+        return;
+      }
       if (ev.code === 'Space') ev.preventDefault();
       const dir = TURN_KEYS[ev.code];
       if (dir && !ev.repeat) {
         this.held.add(ev.code);
         this.heldSince.set(ev.code, performance.now());
-        send(dir * FINE_NUDGE); // instant fine tap...
-        setTimeout(send, HOLD_MS + 10); // ...then full turn if still held
+        send(dir * KEYBOARD_TUNING.fineNudge); // instant fine tap...
+        setTimeout(send, KEYBOARD_TUNING.holdMs + 10); // ...then full turn if still held
         return;
       }
       this.held.add(ev.code);
@@ -184,5 +226,30 @@ export class Input {
       const [wx, wy] = renderer.screenToWorld(ev.clientX, ev.clientY);
       net.send({ t: 'builder', order, x: Math.floor(wx), y: Math.floor(wy) });
     });
+  }
+
+  /**
+   * Integrate the throttle each frame: W/S (or ↑/↓) ramp the persistent cruise
+   * up/down and it holds when released; death resets it. Call from the render
+   * loop. Turn and fire stay event-driven (handled in the constructor).
+   */
+  tick(now: number): void {
+    const dt = this.lastNow ? Math.min(0.1, (now - this.lastNow) / 1000) : 0;
+    this.lastNow = now;
+    const me = this.gameState.me();
+    if (!me || !me.alive) {
+      if (this.cruise !== 0) {
+        this.cruise = 0;
+        this.doSend();
+      }
+      return;
+    }
+    const up = this.held.has('KeyW') || this.held.has('ArrowUp');
+    const down = this.held.has('KeyS') || this.held.has('ArrowDown');
+    const dir = (up ? 1 : 0) - (down ? 1 : 0);
+    if (dir !== 0) {
+      this.cruise = Math.max(-1, Math.min(1, this.cruise + dir * KEYBOARD_TUNING.throttleRate * dt));
+      this.doSend();
+    }
   }
 }

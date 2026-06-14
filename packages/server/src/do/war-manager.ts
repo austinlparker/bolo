@@ -9,6 +9,7 @@
 import {
   FACTIONS,
   INTERMISSION_SECONDS,
+  TICK_HZ,
   type Faction,
   type PlayerProfile,
   type WarRecord,
@@ -76,7 +77,9 @@ export class WarManager {
       winner,
       startedAt: world.startedAt,
       endedAt: Date.now(),
-      durationMinutes: Math.round((Date.now() - world.startedAt) / 60000),
+      // simulated minutes fought (matches the tick-based war clock), not
+      // wall-clock span — a war that sat frozen while idle wasn't being fought
+      durationMinutes: Math.round(world.tick / TICK_HZ / 60),
     };
     this.history.push(record);
     // credit only the people who actually fought in this war
@@ -95,6 +98,9 @@ export class WarManager {
   startNewWar(oldWorld: World, store: SessionStore): World {
     const seed = nextWarSeed(oldWorld.seed, oldWorld.warNumber + 1);
     const world = new World(oldWorld.warNumber + 1, seed);
+    // fresh war, fresh roster: only players who fight THIS war earn its credit.
+    // (endWar already consumed the previous war's set.)
+    this.fighters.clear();
     // re-seat connected players in fresh tanks
     for (const session of store) {
       if (session.role === 'player' && session.did && session.handle) {

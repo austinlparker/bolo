@@ -1,7 +1,18 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ]
   },
-  "include": ["src", "../shared/src"]
+  "include": [
+    "src",
+    "../shared/src",
+    "../server/src/sim"
+  ],
+  "exclude": [
+    "../server/src/sim/*.test.ts"
+  ]
 }

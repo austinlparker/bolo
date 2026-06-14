@@ -23,6 +23,9 @@ const root = document.getElementById('app')!;
 
 if (location.pathname.startsWith('/map')) {
   void startSpectator(root);
+} else if (import.meta.env.DEV && location.pathname.startsWith('/rig')) {
+  // control-feel rig: four sim variants side by side (dev only)
+  void import('./rig').then((m) => m.startRig(root));
 } else if (location.pathname.startsWith('/leaderboard')) {
   startLeaderboard(root);
 } else if (location.pathname.startsWith('/notes')) {
@@ -104,8 +107,8 @@ async function startPlayer(): Promise<void> {
         state.applyWelcome(msg);
         if (msg.you) {
           const controls = touch
-            ? 'left stick drives · right stick turns the tank & fires · ⚒ builds'
-            : 'WASD drive · space fire · 1-6 tools · G sends the builder · press ? for the field manual';
+            ? 'left ▲▼ throttle (holds) + FIRE · STOP halts · right ◀▶ turn'
+            : 'W/S throttle (holds) · X stop · A/D turn · space fire · 1-6 tools · ? manual';
           hud.showBanner(
             `<span class="f-${msg.you.faction}">you fight for ${FACTION_NAMES[msg.you.faction]}</span><br/>` +
               `<small>${controls}</small>`,
@@ -134,6 +137,8 @@ async function startPlayer(): Promise<void> {
               sound.play('bigboom', { volume: 1 });
             } else if (e.e === 'base_captured' || e.e === 'pill_captured') {
               sound.play('capture', { volume: e.handle === ear.handle ? 0.9 : 0.4 });
+            } else if (e.e === 'base_neutralized') {
+              sound.play('bigboom', { volume: 0.5 });
             }
           }
         }
@@ -146,6 +151,15 @@ async function startPlayer(): Promise<void> {
         state.emotes.set(msg.tankId, { kind: msg.kind, at: performance.now() });
         break;
       case 'war_over':
+        // Move the client into intermission so the war panel shows the
+        // "next war in Ns" countdown immediately — the server sends no state
+        // frames during intermission, so without this the HUD would sit on
+        // stale 'active' info for the full ~2 minutes until new_war arrives.
+        if (state.war) {
+          state.war.phase = 'intermission';
+          state.war.nextWarAt = msg.nextWarAt;
+          state.war.dominance = null;
+        }
         hud.showBanner(
           `<span class="f-${msg.winner}">${FACTION_NAMES[msg.winner]} HAS TAKEN THE ISLAND</span><br/>` +
             `<small>war ${msg.record.warNumber} lasted ${msg.record.durationMinutes} minutes — new island forming...</small>`,
@@ -175,12 +189,19 @@ async function startPlayer(): Promise<void> {
   }
 
   net.onClose = () => state.pushFeed('connection lost — reconnecting...');
+  const input = new Input(net, renderer, hud, state, sound);
+  // after (re)connect, force-resend held controls + cruise so the fresh tank
+  // obeys what's currently held instead of sitting idle
+  net.onOpen = () => {
+    input.resync();
+    touchControls?.resync();
+  };
   net.connect();
-  new Input(net, renderer, hud, state, sound);
 
   function loop(now: number): void {
     requestAnimationFrame(loop);
     renderer.frame(state, now);
+    input.tick(now); // integrate the keyboard throttle (cruise)
     touchControls?.tick(state, now);
     hud.update(state);
   }

@@ -25,6 +25,7 @@ export interface SimContext {
   nudges: Map<number, number>;
   refuelTimers: Map<number, number>;
   regenTimers: Map<number, number>;
+  fortifyTimers: Map<number, number>;
 
   // per-tick accumulators
   events: GameEvent[];

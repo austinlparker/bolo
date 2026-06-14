@@ -1,5 +1,21 @@
 /** Shared helpers extracted from the World class. */
-import { Terrain } from '@bolo/shared';
+import {
+  ATTRITION_AFTER_MINUTES,
+  ATTRITION_FLOOR,
+  ATTRITION_RAMP_MINUTES,
+  Terrain,
+} from '@bolo/shared';
+
+/**
+ * Late-war supply decay: 1 until ATTRITION_AFTER_MINUTES, then linear down to
+ * ATTRITION_FLOOR over ATTRITION_RAMP_MINUTES. Scales base fortification and
+ * restocking so marathon wars can't turtle forever.
+ */
+export function attritionFactor(warMinutes: number): number {
+  if (warMinutes <= ATTRITION_AFTER_MINUTES) return 1;
+  const t = Math.min(1, (warMinutes - ATTRITION_AFTER_MINUTES) / ATTRITION_RAMP_MINUTES);
+  return 1 - t * (1 - ATTRITION_FLOOR);
+}
 
 /** Whether a builder can construct on this terrain type. */
 export function canBuildOn(t: Terrain): boolean {

@@ -41,6 +41,9 @@ interface AiMemory {
   /** wandering aim error (radians), resampled every half second */
   aimJitter: number;
   aimJitterTick: number;
+  /** a goalKey that A* couldn't reach overland, skipped until unreachableUntil */
+  unreachableGoalKey: string;
+  unreachableUntil: number;
 }
 
 // Humanizers: garrison bots aimed with perfect server-side information and
@@ -49,6 +52,10 @@ interface AiMemory {
 // time plus a wandering aim error keeps them dangerous but beatable.
 const NPC_REACTION_TICKS = Math.round(TICK_HZ * 0.6);
 const NPC_AIM_SPREAD = 0.12; // radians; ~7° max error, resampled at 2Hz
+// After A* fails to reach a goal overland, skip re-selecting it for this long
+// so a cut-off garrison doesn't re-run a full-budget search at the same
+// impossible goal every couple of seconds.
+const NPC_UNREACHABLE_BACKOFF = TICK_HZ * 30;
 
 // A* scratch buffers, allocated once. findPath used to allocate ~768KB of
 // typed arrays per call; with a dozen garrisons repathing, the allocation +
@@ -175,6 +182,10 @@ export class NpcController {
     for (const b of world.bases) {
       const isMine = b.owner === tank.faction;
       if (resupplying ? !isMine : isMine) continue;
+      // skip an attack goal we recently failed to reach overland (see backoff below)
+      if (!resupplying && world.tick < mem.unreachableUntil && mem.unreachableGoalKey === `base:${b.id}:${b.owner}`) {
+        continue;
+      }
       const d = Math.hypot(b.x + 0.5 - tank.x, b.y + 0.5 - tank.y);
       const bias = !resupplying && b.owner !== 'neutral' ? 40 : 0; // prefer free real estate
       if (d + bias < bestScore) {
@@ -184,9 +195,10 @@ export class NpcController {
     }
     if (!goal) return { accel: 0, turn: 0, fire: false };
 
-    // bombard a defended enemy base before driving onto the pad
+    // bombard an enemy base's fortifications until it falls neutral, then
+    // drive onto the pad to claim it
     const goalD = Math.hypot(goal.x + 0.5 - tank.x, goal.y + 0.5 - tank.y);
-    if (!resupplying && goal.owner !== 'neutral' && goal.armorStock > 0 && goalD < SHELL_RANGE * 0.9) {
+    if (!resupplying && goal.owner !== 'neutral' && goal.hp > 0 && goalD < SHELL_RANGE * 0.9) {
       return steerAndShoot(world, tank, goal.x + 0.5, goal.y + 0.5, goalD > 4, tank.shells > 0);
     }
 
@@ -203,8 +215,11 @@ export class NpcController {
       mem.pathAge = 0;
       mem.goalKey = goalKey;
       if (mem.path.length === 0 && goalD > 6) {
-        // goal unreachable overland from here (cut off by sea/walls): wander
-        // toward a random nearby spot and try again on the next recompute
+        // goal unreachable overland from here (cut off by sea/walls): back it
+        // off so we stop re-searching it every recompute, and wander toward a
+        // random nearby spot meanwhile
+        mem.unreachableGoalKey = goalKey;
+        mem.unreachableUntil = world.tick + NPC_UNREACHABLE_BACKOFF;
         const ang = Math.random() * Math.PI * 2;
         mem.path = [[tank.x + Math.cos(ang) * 8, tank.y + Math.sin(ang) * 8]];
       } else if (mem.path.length === 0 && goalD > 1.5) {
@@ -241,6 +256,15 @@ export class NpcController {
     return steerAndShoot(world, tank, wx, wy, true, false);
   }
 
+  /**
+   * Drop all AI memory. A new war builds a fresh World whose tank ids restart
+   * at 1; without this, new NPCs would inherit stale paths/goals from the
+   * discarded world (and the memory map would grow unbounded across wars).
+   */
+  reset(): void {
+    this.memories.clear();
+  }
+
   private getMemory(tank: Tank): AiMemory {
     let mem = this.memories.get(tank.id);
     if (!mem) {
@@ -255,6 +279,8 @@ export class NpcController {
         targetSince: 0,
         aimJitter: 0,
         aimJitterTick: -Infinity,
+        unreachableGoalKey: '',
+        unreachableUntil: 0,
       };
       this.memories.set(tank.id, mem);
     }

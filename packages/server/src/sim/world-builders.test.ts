@@ -13,9 +13,7 @@ import {
   PILL_REPAIR_HP,
   PILL_REPAIR_TREES,
   TANK_MAX_ARMOR,
-  TOTAL_BASES,
   TREES_PER_FOREST_TILE,
-  WAR_MAX_MINUTES,
   WAR_MIN_MINUTES,
 } from '@bolo/shared';
 import { Terrain, MineState, idx } from '@bolo/shared';
@@ -259,23 +257,8 @@ describe('World victory & lifecycle', () => {
     expect(result.warEnded).toBeNull();
   });
 
-  it('max-time tiebreak: more bases wins at WAR_MAX_MINUTES', () => {
-    const w = makeWorld();
-    // Dawn owns 8, dusk owns 6
-    for (let i = 0; i < 8; i++) w.bases[i].owner = 'dawn';
-    for (let i = 8; i < TOTAL_BASES; i++) w.bases[i].owner = 'dusk';
-    const result = w.doTick(WAR_MAX_MINUTES);
-    expect(result.warEnded).toBe('dawn');
-  });
-
-  it('max-time exact tie → null (sudden death continues)', () => {
-    const w = makeWorld();
-    // 7 each
-    for (let i = 0; i < 7; i++) w.bases[i].owner = 'dawn';
-    for (let i = 7; i < TOTAL_BASES; i++) w.bases[i].owner = 'dusk';
-    const result = w.doTick(WAR_MAX_MINUTES);
-    expect(result.warEnded).toBeNull();
-  });
+  // Time-cap base-majority tiebreak was replaced by the dominance countdown
+  // (see world.test.ts for dominance victory / break / persistence coverage).
 
   it('respawn: dead tank respawns at respawnTick', () => {
     const w = makeWorld();

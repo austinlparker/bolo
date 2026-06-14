@@ -142,13 +142,20 @@ profiles/history for UI work.
 - Pillbox: 75 hp, range 8, fires faster the more damaged it is (2.0 s → 0.4 s
   cooldown), self-repairs slowly. At 0 hp it's a husk — drive over it to
   carry it, then `pillbox`-order to re-emplace it for your side.
-- Bases refuel friendly tanks standing on them (armor/shells/mines, 2/s from
-  stock). Enemy bases: shell them to drain `armorStock`, or park on the pad
-  (drains 2 stock/s, costs you 2 armor/s) — at 0 stock it flips. Stock
-  regenerates only while uncontested.
+- Bases have two gauges: `hp` (fortification, max 100) and supply stocks
+  (`armorStock`/`shellStock`/`mineStock`). Friendly tanks on the pad refuel
+  from stock; refuel and restock rates scale with `hp` — a battered base is
+  a slow one. Enemy bases: shell them (5 hp/hit) or park on the pad (1 hp/0.5s,
+  costs you 1 armor/0.5s) until `hp` hits 0 — the base then goes NEUTRAL
+  (`base_neutralized` event) and anyone can drive on to claim it
+  (`base_captured`). Owned, uncontested bases fortify back up over time.
 - Mines: 20 damage, chain-react with adjacent mines, leave craters. ~40
   neutral mines are buried on every island and visible to no one.
-- War ends when one faction owns all 14 bases (10-minute minimum war length).
+- Wars end by conquest: one faction owning all 14 bases (10-minute minimum).
+  There is no time cap, but holding ≥12 bases starts a 10-minute DOMINANCE
+  countdown (the `dominance` event / `war.dominance` field) that wins the war
+  unless broken, and past 90 minutes attrition slows every base's
+  fortification and restocking — marathon defenses eventually crack.
 
 ## Bot tips
 

@@ -87,9 +87,18 @@ export interface Base {
   x: number; // tile coords
   y: number;
   owner: Owner;
+  /** fortification 0..BASE_MAX_HP; at 0 the base goes neutral */
+  hp: number;
   armorStock: number;
   shellStock: number;
   mineStock: number;
+}
+
+/** A faction holding >= DOMINANCE_BASES; they win at endsAt unless broken. */
+export interface DominanceInfo {
+  faction: Faction;
+  /** epoch ms at which the dominant faction wins */
+  endsAt: number;
 }
 
 export interface WarInfo {
@@ -100,6 +109,8 @@ export interface WarInfo {
   /** when phase === 'intermission': epoch ms at which the next war begins */
   nextWarAt: number | null;
   baseCounts: Record<Owner, number>;
+  /** present while a dominance-victory countdown is running */
+  dominance?: DominanceInfo | null;
 }
 
 export interface WarRecord {

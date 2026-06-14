@@ -47,7 +47,14 @@ body {
 #app,
 canvas.game {
   position: fixed;
-  inset: 0;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  /* dvh tracks mobile Safari's collapsing toolbar so the canvas fills only the
+     visible area (and the renderer measures clientHeight to match). */
+  width: 100dvw;
+  height: 100dvh;
 }
 
 canvas.game {
@@ -648,65 +655,186 @@ body.touch-mode #touch-ui {
 .stick-zone {
   position: fixed;
   bottom: 0;
-  width: 200px;
-  height: 200px;
   z-index: 15;
   touch-action: none;
 }
 
-#joy-zone {
+/* throttle: tall track, left edge */
+#throttle-zone {
   left: 0;
+  width: 150px;
+  height: 250px;
 }
 
-#aim-zone {
+/* turn: circular stick, right corner (right thumb's sole job now FIRE moved left) */
+#turn-zone {
   right: 0;
+  width: 180px;
+  height: 175px;
 }
 
 .stick-base {
   position: absolute;
   bottom: calc(22px + env(safe-area-inset-bottom, 0px));
-  width: 124px;
-  height: 124px;
-  border-radius: 50%;
   border: 2px solid var(--line-bright);
-  background:
-    url('/assets/mobile/joystick/joystick_circle_pad_a.png') center / cover no-repeat,
-    rgba(13, 16, 22, 0.5);
-  opacity: 0.92;
+  background: rgba(13, 16, 22, 0.5);
+  opacity: 0.94;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
 }
 
-#joy-base {
-  left: 22px;
+#throttle-base {
+  left: calc(20px + env(safe-area-inset-left, 0px));
+  width: 66px;
+  height: 200px;
+  border-radius: 33px;
 }
 
-#aim-base {
-  right: 22px;
-  border-color: #7a3434;
+/* held-cruise fill (top/height painted in renderFill): up = forward, down = reverse */
+#throttle-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+
+/* neutral (stop) line at the track's center */
+#throttle-mark {
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  background: rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+}
+
+#turn-base {
+  right: calc(22px + env(safe-area-inset-right, 0px));
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(13, 16, 22, 0.5);
+}
+
+/* turn-only affordance: ◀ ▶ at the sides (not the old 4-way sprite) */
+#turn-base::before,
+#turn-base::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 10px solid transparent;
+  z-index: 1;
+}
+#turn-base::before {
+  left: 12px;
+  border-right-color: rgba(255, 255, 255, 0.34);
+  border-left: 0;
+}
+#turn-base::after {
+  right: 12px;
+  border-left-color: rgba(255, 255, 255, 0.34);
+  border-right: 0;
+}
+
+/* throttle ▲ ▼ hints at the ends of the track */
+#throttle-base::before,
+#throttle-base::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 9px solid transparent;
+  z-index: 1;
+}
+#throttle-base::before {
+  top: 12px;
+  border-bottom-color: rgba(255, 255, 255, 0.3);
+  border-top: 0;
+}
+#throttle-base::after {
+  bottom: 12px;
+  border-top-color: rgba(255, 255, 255, 0.3);
+  border-bottom: 0;
 }
 
 .stick-knob {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 54px;
-  height: 54px;
-  margin: -27px 0 0 -27px;
+  width: 52px;
+  height: 52px;
+  margin: -26px 0 0 -26px;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 35%, #f0b252, #c47f20);
   border: 2px solid #5a3c0c;
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5);
+  z-index: 2;
 }
 
-.stick-knob.aim {
-  background: radial-gradient(circle at 35% 35%, #e87575, #a83232);
-  border-color: #5a1414;
+/* fire button: left cluster, inboard of the throttle track. Cruise throttle is
+   set-and-forget, so the left thumb is free to fire while the right thumb turns. */
+#fire-btn {
+  position: fixed;
+  left: calc(100px + env(safe-area-inset-left, 0px));
+  bottom: calc(30px + env(safe-area-inset-bottom, 0px));
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-chrome, monospace);
+  font-size: 16px;
+  letter-spacing: 2px;
+  color: #ffd9c9;
+  border: 3px solid #8a2f2f;
+  background: radial-gradient(circle at 38% 34%, rgba(232, 96, 72, 0.5), rgba(120, 28, 24, 0.62));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  z-index: 16;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.stick-knob.aim.hot {
-  background: radial-gradient(circle at 35% 35%, #ff9a6a, #e04a2a);
-  box-shadow: 0 0 16px rgba(255, 110, 60, 0.7);
+#fire-btn.hot {
+  border-color: #ff7a4a;
+  color: #fff;
+  background: radial-gradient(circle at 38% 34%, rgba(255, 150, 90, 0.85), rgba(224, 74, 42, 0.8));
+  box-shadow: 0 0 22px rgba(255, 110, 60, 0.7);
 }
+
+/* stop: zeroes the held throttle; stacked above FIRE in the left cluster */
+#stop-btn {
+  position: fixed;
+  left: calc(117px + env(safe-area-inset-left, 0px));
+  bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-chrome, monospace);
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: #d7dce6;
+  border: 2px solid var(--line-bright);
+  background: rgba(13, 16, 22, 0.62);
+  z-index: 15;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#stop-btn:active {
+  border-color: #e85d5d;
+  color: #ffd9d9;
+  background: rgba(60, 16, 16, 0.7);
+}
+
 
 /* chat hides behind a small bottom-center toggle on touch devices */
 #chat-toggle {
@@ -714,16 +842,16 @@ body.touch-mode #touch-ui {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
-  width: 42px;
-  height: 42px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  width: 46px;
+  height: 46px;
   border-radius: 50%;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
-  border: 1px solid var(--line);
+  font-size: 17px;
+  border: 2px solid var(--line-bright);
   background: rgba(13, 16, 22, 0.55);
-  z-index: 16;
+  z-index: 17;
   pointer-events: auto;
   cursor: pointer;
 }
@@ -759,36 +887,98 @@ body.touch-mode #hud-chat.open #chat-input {
 }
 
 /* ---------- touch menu: help / leaderboard / leave ---------- */
-/* the desktop toolbar is display:none on touch; these stand in for it,
-   in a column under the (top-right) minimap */
+/* the desktop toolbar is display:none on touch; a single ⋯ button under the
+   (top-right) minimap opens a CENTERED overlay (a dropdown got clipped off the
+   screen edge) that stands in for it */
 #touch-menu {
   display: none;
-  position: fixed;
-  right: calc(8px + env(safe-area-inset-right, 0px));
-  top: calc(116px + env(safe-area-inset-top, 0px));
-  flex-direction: column;
-  gap: 8px;
-  z-index: 16;
-  pointer-events: auto;
 }
 
 body.touch-mode #touch-menu {
-  display: flex;
+  display: block;
 }
 
-#touch-menu .kbtn {
-  width: 38px;
-  height: 38px;
+/* the ⋯ button is fixed top-right whether the menu is open or not */
+#tm-toggle {
+  position: fixed;
+  top: calc(108px + env(safe-area-inset-top, 0px));
+  right: calc(8px + env(safe-area-inset-right, 0px));
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: 20px;
   border: 1px solid var(--line);
-  background: rgba(13, 16, 22, 0.55);
+  background: rgba(13, 16, 22, 0.62);
+  color: var(--text);
+  cursor: pointer;
+  /* #touch-menu is a .hud (pointer-events:none); opt the controls back in */
+  pointer-events: auto;
+  z-index: 31;
+}
+
+/* open: the container becomes a dimmed full-screen backdrop (tap it to close) */
+#touch-menu.open {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 10, 0.6);
+  pointer-events: auto;
+  z-index: 30;
+}
+
+#tm-panel {
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(320px, 82vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 44px rgba(0, 0, 0, 0.6);
+  pointer-events: auto;
+  z-index: 31;
+}
+
+#touch-menu.open #tm-panel {
+  display: flex;
+}
+
+.tm-item {
+  padding: 14px 16px;
+  font-size: 16px;
   color: var(--text);
   text-decoration: none;
+  border-radius: 7px;
   cursor: pointer;
+  white-space: nowrap;
+  position: relative;
+}
+
+.tm-item:active {
+  background: rgba(232, 163, 61, 0.16);
+  color: var(--dawn);
+}
+
+.tm-item.unread::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  margin-top: -4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e85d5d;
+  box-shadow: 0 0 6px rgba(232, 93, 93, 0.9);
 }
 
 /* the desktop toolbar never shows on touch; tools live behind the ⚒ button */
@@ -810,8 +1000,8 @@ body.touch-mode #builder-ui {
 #builder-here {
   display: none;
   position: fixed;
-  right: 36px;
-  bottom: calc(246px + env(safe-area-inset-bottom, 0px));
+  left: calc(50% - 84px);
+  bottom: calc(78px + env(safe-area-inset-bottom, 0px));
   width: 50px;
   height: 50px;
   border-radius: 50%;
@@ -830,10 +1020,10 @@ body.touch-mode #builder-ui {
 
 #builder-btn {
   position: fixed;
-  right: 30px;
-  bottom: calc(172px + env(safe-area-inset-bottom, 0px));
-  width: 62px;
-  height: 62px;
+  left: calc(50% - 81px);
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  width: 46px;
+  height: 46px;
   border-radius: 50%;
   border: 2px solid var(--line-bright);
   background: rgba(13, 16, 22, 0.55);
@@ -841,8 +1031,8 @@ body.touch-mode #builder-ui {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 22px;
-  z-index: 15;
+  font-size: 19px;
+  z-index: 17;
   touch-action: none;
   cursor: pointer;
 }
@@ -866,8 +1056,9 @@ body.touch-mode #builder-ui {
 #builder-tray {
   display: none;
   position: fixed;
-  right: 102px;
-  bottom: calc(112px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(80px + env(safe-area-inset-bottom, 0px));
   grid-template-columns: repeat(2, auto);
   gap: 6px;
   z-index: 16;
@@ -1276,13 +1467,17 @@ body.touch-mode #banner small {
 }
 
 /* unread dot on the 📜 buttons until the latest bulletin is opened */
+/* #tm-toggle is already position:fixed (a positioning context for the dot),
+   so it's intentionally not reset to relative here — doing so broke its
+   top-right placement. */
 #tool-notes,
 #tm-notes {
   position: relative;
 }
 
 #tool-notes.unread::after,
-#tm-notes.unread::after {
+#tm-notes.unread::after,
+#tm-toggle.unread::after {
   content: '';
   position: absolute;
   top: 3px;
@@ -1396,15 +1591,17 @@ kbd {
 #emote-toggle {
   display: none;
   position: fixed;
-  left: calc(50% + 34px);
-  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
-  width: 42px;
-  height: 42px;
+  left: calc(50% + 35px);
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  width: 46px;
+  height: 46px;
   border-radius: 50%;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
-  z-index: 16;
+  font-size: 17px;
+  border: 2px solid var(--line-bright);
+  background: rgba(13, 16, 22, 0.55);
+  z-index: 17;
   pointer-events: auto;
   cursor: pointer;
 }
@@ -1768,4 +1965,77 @@ body.touch-mode #hud-status .rank-chip {
   margin-top: 14px;
   font-size: 10px;
   text-align: center;
+}
+
+/* ---------- portrait ----------
+   The two sticks own the bottom corners (throttle left, turn right). FIRE sits
+   inboard of the throttle with STOP above it, so the left thumb fires while the
+   right thumb turns. The occasional buttons (build / chat / emote) become a
+   vertical column down the right edge under the ⋯ menu, off the play area. */
+@media (orientation: portrait) {
+  body.touch-mode #throttle-base {
+    height: 150px;
+  }
+  body.touch-mode #throttle-zone {
+    height: 180px;
+  }
+  body.touch-mode #turn-zone {
+    right: 0;
+    width: 150px;
+    height: 158px;
+  }
+  body.touch-mode #fire-btn {
+    left: calc(96px + env(safe-area-inset-left, 0px));
+    right: auto;
+    bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+    width: 80px;
+    height: 80px;
+  }
+  body.touch-mode #stop-btn {
+    left: calc(108px + env(safe-area-inset-left, 0px));
+    bottom: calc(118px + env(safe-area-inset-bottom, 0px));
+  }
+  /* build / chat / emote: right-edge column under the ⋯ menu */
+  body.touch-mode #builder-btn,
+  body.touch-mode #chat-toggle,
+  body.touch-mode #emote-toggle {
+    left: auto;
+    right: calc(9px + env(safe-area-inset-right, 0px));
+    bottom: auto;
+    transform: none;
+  }
+  body.touch-mode #builder-btn {
+    top: calc(156px + env(safe-area-inset-top, 0px));
+  }
+  body.touch-mode #chat-toggle {
+    top: calc(210px + env(safe-area-inset-top, 0px));
+  }
+  body.touch-mode #emote-toggle {
+    top: calc(264px + env(safe-area-inset-top, 0px));
+  }
+  /* the build tray / "build here" open to the LEFT of the column button */
+  body.touch-mode #builder-ui.open #builder-tray {
+    left: auto;
+    right: calc(62px + env(safe-area-inset-right, 0px));
+    top: calc(156px + env(safe-area-inset-top, 0px));
+    bottom: auto;
+    transform: none;
+  }
+  body.touch-mode #builder-ui.armed #builder-here {
+    left: auto;
+    right: calc(62px + env(safe-area-inset-right, 0px));
+    top: calc(158px + env(safe-area-inset-top, 0px));
+    bottom: auto;
+  }
+}
+
+/* portrait: the top HUD can't fit stats + war line side by side; drop the
+   war line to its own row under the stats */
+@media (orientation: portrait) {
+  body.touch-mode #hud-war {
+    top: calc(42px + env(safe-area-inset-top, 0px));
+    left: calc(8px + env(safe-area-inset-left, 0px));
+    transform: none;
+    max-width: 70vw;
+  }
 }

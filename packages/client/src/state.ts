@@ -4,6 +4,7 @@
  * between server ticks.
  */
 import {
+  angleDelta,
   base64ToBytes,
   type Base,
   type BuilderView,
@@ -154,6 +155,13 @@ export class GameState {
       case 'base_captured':
         this.pushFeed(`${e.handle} captured a base for ${e.by}`);
         break;
+      case 'base_neutralized':
+        this.pushFeed(`a base's defenses fell to ${e.by} fire`);
+        break;
+      case 'dominance':
+        if (this.war) this.war.dominance = e.faction && e.endsAt ? { faction: e.faction, endsAt: e.endsAt } : null;
+        this.pushFeed(e.faction ? `${e.faction} dominates the island — the war nears its end` : 'dominance broken — the war goes on');
+        break;
       case 'pill_captured':
         this.pushFeed(`${e.handle} salvaged a pillbox`);
         break;
@@ -200,14 +208,8 @@ export class GameState {
     return {
       x: a.view.x + (b.view.x - a.view.x) * t,
       y: a.view.y + (b.view.y - a.view.y) * t,
-      dir: a.view.dir + shortestAngle(a.view.dir, b.view.dir) * t,
+      dir: a.view.dir + angleDelta(a.view.dir, b.view.dir) * t,
     };
   }
 }
 
-function shortestAngle(a: number, b: number): number {
-  let d = b - a;
-  while (d > Math.PI) d -= 2 * Math.PI;
-  while (d < -Math.PI) d += 2 * Math.PI;
-  return d;
-}

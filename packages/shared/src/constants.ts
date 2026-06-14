@@ -20,13 +20,20 @@ export const FACTION_NAMES: Record<Faction, string> = {
 
 // --- Tank ---
 export const TANK_RADIUS = 0.38;
-export const TANK_MAX_SPEED = 4.0; // tiles/sec at 100% terrain speed (road)
-export const TANK_ACCEL = 6.0; // tiles/sec^2
-export const TANK_BRAKE = 10.0;
-export const TANK_TURN_RATE = 3.2; // radians/sec, at full ramp
+// Handling numbers below were dialed in on the /rig comparison harness
+// (four sim variants, same inputs): punchy off the line with a soft top
+// end, and turns that ramp fast enough to feel connected to the key.
+export const TANK_MAX_SPEED = 5.4; // tiles/sec at 100% terrain speed (road)
+export const TANK_ACCEL = 11; // tiles/sec^2, at standstill
+// Tapers acceleration as speed approaches max: effective accel is
+// TANK_ACCEL * (1 - curve * speed/maxSpeed). 0 = constant (linear ramp),
+// higher = punchy start that eases into top speed.
+export const TANK_ACCEL_CURVE = 0.4;
+export const TANK_BRAKE = 9.5;
+export const TANK_TURN_RATE = 4.5; // radians/sec, at full ramp
 // Rotational inertia: turn rate ramps UP at this accel (full rate in ~0.32s),
 // but slowing/releasing/reversing is instant so aim never overshoots.
-export const TANK_TURN_ACCEL = 10; // radians/sec^2
+export const TANK_TURN_ACCEL = 16; // radians/sec^2
 export const TANK_MAX_ARMOR = 40;
 export const TANK_MAX_SHELLS = 40;
 export const TANK_MAX_MINES = 40;
@@ -38,10 +45,11 @@ export const TANK_FIRE_COOLDOWN = 0.35; // seconds between shots
 export const TANK_RESPAWN_SECONDS = 6;
 // Reverse gear: top speed backing up, as a fraction of forward max. Slow
 // enough that reversing is an escape maneuver, not a viable way to fight.
-export const TANK_REVERSE_FACTOR = 0.5;
+export const TANK_REVERSE_FACTOR = 0.55;
 // Faster than road speed: committing 10 trees and an exposed crossing to
-// the open water should pay off (at 3.2 a boat was slower than driving).
-export const BOAT_SPEED = 4.4; // tiles/sec on water when on a boat
+// the open water should pay off (at 3.2 a boat was slower than driving;
+// re-raised when the rig retune took road speed to 5.4).
+export const BOAT_SPEED = 5.8; // tiles/sec on water when on a boat
 
 // --- Shells ---
 // Ranges are scaled up from original Bolo's (7/8) for the larger viewport;
@@ -49,11 +57,9 @@ export const BOAT_SPEED = 4.4; // tiles/sec on water when on a boat
 export const SHELL_SPEED = 9.0; // tiles/sec
 export const SHELL_RANGE = 9.0; // tiles, max; players range down with the mouse buttons
 export const SHELL_DAMAGE = 5;
-export const SHELL_RADIUS = 0.12;
 
 // --- Mines ---
 export const MINE_DAMAGE = 20;
-export const MINE_TRIGGER_RADIUS = 0.45;
 
 // --- Pillboxes ---
 export const PILL_MAX_HP = 75;
@@ -66,15 +72,26 @@ export const PILL_REPAIR_TREES = 4; // trees per 15 hp repaired
 export const PILL_REPAIR_HP = 15;
 
 // --- Bases (the control points of the war) ---
+// A base has two separate gauges:
+//  - hp ("fortification"): its defenses. Shells and sieging tanks wear it
+//    down; at 0 the base goes NEUTRAL and anyone can drive on to claim it.
+//    Owned, uncontested bases fortify back up over time.
+//  - stocks (armor/shell/mine): the supplies it dispenses to friendly tanks.
+//    Restock and refuel rates scale with hp — a battered base is a slow one.
+export const BASE_MAX_HP = 100;
+export const BASE_CAPTURE_HP = 25; // fortification granted the moment a base is claimed
+export const BASE_NEUTRAL_START_HP = 50; // unclaimed bases at war start
+export const BASE_FORTIFY_INTERVAL = 2; // seconds per hp while owned & uncontested
+export const BASE_SUPPLY_FLOOR = 0.25; // supply-rate multiplier at 0 hp (1.0 at full hp)
 export const BASE_MAX_ARMOR_STOCK = 90;
 export const BASE_MAX_SHELL_STOCK = 90;
 export const BASE_MAX_MINE_STOCK = 40;
 export const BASE_START_STOCK = 0.5; // fraction of max for neutral bases at war start
 export const BASE_REFUEL_RADIUS = 0.75;
-export const BASE_REFUEL_INTERVAL = 0.5; // seconds per unit transferred
-export const BASE_SIEGE_DRAIN_INTERVAL = 0.5; // enemy on pad drains 1 armor stock per interval
+export const BASE_REFUEL_INTERVAL = 0.5; // seconds per unit transferred, at full hp
+export const BASE_SIEGE_DRAIN_INTERVAL = 0.5; // enemy on pad drains 1 hp per interval
 export const BASE_SIEGE_DAMAGE = 1; // ...and takes this much damage per interval
-export const BASE_REGEN_INTERVAL = 8; // seconds per unit of passive restock when owned
+export const BASE_REGEN_INTERVAL = 8; // seconds per unit of passive restock when owned, at full hp
 
 // --- Builder (the engineer / "man") ---
 export const BUILDER_SPEED = 1.6; // tiles/sec on land
@@ -94,12 +111,21 @@ export const FOREST_HIDE_RANGE = 3; // enemies within this range still see a hid
 export const PLAYER_VIEW_RADIUS = 24; // server only sends entities within this range
 
 // --- War lifecycle ---
+// Wars end by conquest only — there is no time cap. Two systems keep a war
+// from stalemating forever (symmetric garrisons once made all-14-bases a
+// random walk: production saw a 226-minute war and an 8-hour 7v7 deadlock):
+//  - DOMINANCE: hold >= DOMINANCE_BASES continuously for DOMINANCE_MINUTES
+//    and the war is yours, ending the last-base turtle grind. A visible
+//    countdown gives the defenders a clear "break this or lose" objective.
+//  - ATTRITION: past ATTRITION_AFTER_MINUTES, base fortification and
+//    restocking decay toward ATTRITION_FLOOR over ATTRITION_RAMP_MINUTES —
+//    supply lines exhaust, defense weakens, and fronts start to move.
 export const WAR_MIN_MINUTES = 10; // a war cannot end before this
-// Past this, holding MORE bases wins (total conquest still ends it early).
-// Symmetric garrisons made all-14-bases a random walk that effectively
-// never terminated: production saw a 226-minute war and an 8-hour 7v7
-// deadlock. Ties at the cap go to sudden death: first faction to lead.
-export const WAR_MAX_MINUTES = 45;
+export const DOMINANCE_BASES = 12;
+export const DOMINANCE_MINUTES = 10;
+export const ATTRITION_AFTER_MINUTES = 90;
+export const ATTRITION_RAMP_MINUTES = 60;
+export const ATTRITION_FLOOR = 0.25;
 export const INTERMISSION_SECONDS = 120;
 export const BASES_PER_FACTION_AT_START = 3;
 export const TOTAL_BASES = 14;
