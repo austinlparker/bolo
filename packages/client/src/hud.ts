@@ -57,7 +57,6 @@ export class Hud {
       'beforeend',
       `
       <div id="hud-status" class="hud kpanel"></div>
-      <div id="hud-war" class="hud kpanel"></div>
       <div id="hud-tools" class="hud kpanel"></div>
       <div id="hud-feed" class="hud"></div>
       <div id="hud-chat" class="hud">
@@ -78,7 +77,10 @@ export class Hud {
           <div id="tm-leave" class="tm-item">⏏ leave the war</div>
         </div>
       </div>
-      <canvas id="hud-minimap" class="hud" width="180" height="180"></canvas>
+      <div id="hud-map" class="hud">
+        <canvas id="hud-minimap" width="180" height="180"></canvas>
+        <div id="hud-war" class="kpanel"></div>
+      </div>
       <div id="banner"></div>
       <div id="toast"></div>
       <div id="death-overlay">⊘ DESTROYED<small></small></div>
@@ -649,22 +651,23 @@ export function warLine(war: WarInfo, bases?: { owner: Owner }[]): string {
   }
   if (war.phase === 'intermission' && war.nextWarAt) {
     const s = Math.max(0, Math.ceil((war.nextWarAt - Date.now()) / 1000));
-    return `WAR ${war.warNumber} OVER — next war in ${s}s`;
+    return `WAR ${war.warNumber} over · next in ${s}s`;
   }
   let dominance = '';
   if (war.dominance) {
     const left = Math.max(0, war.dominance.endsAt - Date.now());
     const m = Math.floor(left / 60000);
     const sec = Math.floor((left % 60000) / 1000);
-    dominance =
-      ` · <span class="f-${war.dominance.faction}">⚑ ${FACTION_NAMES[war.dominance.faction]} dominates` +
-      ` — victory in ${m}:${String(sec).padStart(2, '0')}</span>`;
+    const f = war.dominance.faction;
+    // the flag, in the faction colour, carries who's winning — no name needed
+    dominance = ` <span class="f-${f}">⚑ ${m}:${String(sec).padStart(2, '0')}</span>`;
   }
+  // colour-coded counts (dawn / free / dusk) read as a tally beneath the map;
+  // the leading flag + colour carry war/faction context, so no labels.
   return (
-    `WAR ${war.warNumber} · ` +
-    `<span class="f-dawn">dawn ${c.dawn}</span> / ` +
-    `<span class="f-neutral">free ${c.neutral}</span> / ` +
-    `<span class="f-dusk">dusk ${c.dusk}</span> bases` +
+    `<span class="f-dawn">${c.dawn}</span> ` +
+    `<span class="f-neutral">${c.neutral}</span> ` +
+    `<span class="f-dusk">${c.dusk}</span>` +
     dominance
   );
 }

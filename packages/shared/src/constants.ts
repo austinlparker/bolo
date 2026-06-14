@@ -30,7 +30,7 @@ export const TANK_ACCEL = 11; // tiles/sec^2, at standstill
 // higher = punchy start that eases into top speed.
 export const TANK_ACCEL_CURVE = 0.4;
 export const TANK_BRAKE = 9.5;
-export const TANK_TURN_RATE = 4.5; // radians/sec, at full ramp
+export const TANK_TURN_RATE = 3.2; // radians/sec, at full ramp
 // Rotational inertia: turn rate ramps UP at this accel (full rate in ~0.32s),
 // but slowing/releasing/reversing is instant so aim never overshoots.
 export const TANK_TURN_ACCEL = 16; // radians/sec^2
