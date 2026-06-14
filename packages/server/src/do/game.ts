@@ -84,7 +84,11 @@ export class GameDO implements DurableObject {
       this.state.storage.get<Record<string, PlayerProfile>>('profiles'),
       this.state.storage.get<WarRecord[]>('history'),
     ]);
-    if (profiles) this.war.profiles = new Map(Object.entries(profiles));
+    // Populate the EXISTING profiles map in place — never reassign it. ViewBuilder
+    // captured this.war.profiles by reference at construction; swapping in a new Map
+    // here would leave it reading a stale (empty) map, so welcomeFor could never
+    // resolve a player's faction and every spawn would come back as a spectator.
+    if (profiles) for (const [did, prof] of Object.entries(profiles)) this.war.profiles.set(did, prof);
     if (history) this.war.history = history;
     if (meta && terrain && mines) {
       this.phase = (meta.phase as 'active' | 'intermission') ?? 'active';
