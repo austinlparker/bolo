@@ -11,7 +11,6 @@ import {
   idx,
   MineState,
   SHELL_DAMAGE,
-  SHELL_SPEED,
   shelledTerrain,
   Terrain,
   TERRAIN,
@@ -49,7 +48,7 @@ export class ShellSystem {
     const step = 0.25; // substep length in tiles, to avoid tunnelling
     const survivors: Shell[] = [];
     for (const shell of this.host.shells) {
-      let travel = SHELL_SPEED * DT;
+      let travel = this.host.tuning.shellSpeed * DT;
       let dead = false;
       while (travel > 0 && !dead) {
         const d = Math.min(step, travel, shell.range);
@@ -85,13 +84,16 @@ export class ShellSystem {
       return true;
     }
 
-    // bombardment: shells drain a hostile base's armor stock until it can be overrun
+    // bombardment: shells batter a hostile base's fortifications; at 0 hp it
+    // falls neutral and anyone can drive on to claim it. Neutral (and friendly)
+    // bases don't intercept shells.
     const base = bases.find((b) => b.x === xi && b.y === yi);
-    if (base && base.owner !== shell.faction && base.armorStock > 0) {
-      base.armorStock = Math.max(0, base.armorStock - SHELL_DAMAGE);
+    if (base && base.owner !== 'neutral' && base.owner !== shell.faction && base.hp > 0) {
+      base.hp = Math.max(0, base.hp - SHELL_DAMAGE);
       this.host.basesChanged = true;
       events.push({ e: 'boom', x: shell.x, y: shell.y, kind: 'shell' });
       this.shotResolved(shell, 'base');
+      if (base.hp <= 0) this.host.neutralizeBase(base, shell.faction);
       return true;
     }
 

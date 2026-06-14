@@ -11,14 +11,7 @@ import {
   BOAT_SPEED,
   DT,
   MAP_SIZE,
-  TANK_ACCEL,
-  TANK_BRAKE,
-  TANK_FIRE_COOLDOWN,
   TANK_RADIUS,
-  TANK_REVERSE_FACTOR,
-  TANK_TURN_ACCEL,
-  TANK_TURN_RATE,
-  TANK_MAX_SPEED,
   Terrain,
   TERRAIN,
 } from '@bolo/shared';
@@ -41,25 +34,26 @@ export class TankSystem {
 
   tick(tank: Tank): void {
     const input = this.host.inputs.get(tank.id) ?? { accel: 0, turn: 0, fire: false };
+    const tuning = this.host.tuning;
 
     // rotational inertia: the turn rate ramps UP toward the input's target
     // (a tank has mass), but slowing, releasing or reversing is instant so
     // aim never overshoots the moment you let go
-    const targetRate = clamp(input.turn, -1, 1) * TANK_TURN_RATE;
+    const targetRate = clamp(input.turn, -1, 1) * tuning.turnRate;
     if (targetRate * tank.turnSpeed < 0) tank.turnSpeed = 0; // reversal restarts the ramp
     if (Math.abs(targetRate) <= Math.abs(tank.turnSpeed)) {
       tank.turnSpeed = targetRate;
     } else {
       tank.turnSpeed =
         targetRate > 0
-          ? Math.min(targetRate, tank.turnSpeed + TANK_TURN_ACCEL * DT)
-          : Math.max(targetRate, tank.turnSpeed - TANK_TURN_ACCEL * DT);
+          ? Math.min(targetRate, tank.turnSpeed + tuning.turnAccel * DT)
+          : Math.max(targetRate, tank.turnSpeed - tuning.turnAccel * DT);
     }
     // held turn + queued fine-aim nudges, under one per-tick rotation budget:
     // the held key takes priority, nudges drain from whatever budget remains
     const turnStep = tank.turnSpeed * DT;
     const pending = this.host.nudges.get(tank.id) ?? 0;
-    const budget = TANK_TURN_RATE * DT - Math.abs(turnStep);
+    const budget = tuning.turnRate * DT - Math.abs(turnStep);
     const nudgeStep = clamp(pending, -budget, budget);
     tank.dir += turnStep + nudgeStep;
     if (Math.abs(pending - nudgeStep) > 1e-6) this.host.nudges.set(tank.id, pending - nudgeStep);
@@ -85,15 +79,21 @@ export class TankSystem {
           }
         }
       }
-      maxSpeed = TANK_MAX_SPEED * terrainSpeed;
+      maxSpeed = tuning.maxSpeed * terrainSpeed;
     }
 
-    // W drives forward; S brakes, then backs up at half speed; neither coasts.
-    // Input opposing the current motion brakes harder than plain accel/coast.
+    // accel is a TARGET-SPEED fraction in [-1, 1], not just a direction: the
+    // tank cruises toward accel * maxSpeed, so a held throttle holds a speed.
+    // (Keyboard sends ±1/0, so W is still full ahead and release is a stop;
+    // touch sends a held cruise fraction.) Input opposing the current motion
+    // brakes harder than plain accel/coast.
     const target =
-      input.accel > 0 ? maxSpeed : input.accel < 0 ? -maxSpeed * TANK_REVERSE_FACTOR : 0;
+      input.accel >= 0 ? input.accel * maxSpeed : input.accel * maxSpeed * tuning.reverseFactor;
     const opposing = (input.accel < 0 && tank.speed > 0) || (input.accel > 0 && tank.speed < 0);
-    const rate = opposing ? TANK_BRAKE : TANK_ACCEL;
+    // accel tapers as speed builds (punchy start, soft top end); braking doesn't
+    const rate = opposing
+      ? tuning.brake
+      : tuning.accel * (1 - tuning.accelCurve * Math.min(1, Math.abs(tank.speed) / tuning.maxSpeed));
     if (tank.speed < target) tank.speed = Math.min(target, tank.speed + rate * DT);
     else if (tank.speed > target) tank.speed = Math.max(target, tank.speed - rate * DT);
 
@@ -125,7 +125,7 @@ export class TankSystem {
     tank.fireCooldown = Math.max(0, tank.fireCooldown - DT);
     if (input.fire && tank.fireCooldown <= 0 && tank.shells > 0) {
       tank.shells--;
-      tank.fireCooldown = TANK_FIRE_COOLDOWN;
+      tank.fireCooldown = tuning.fireCooldown;
       this.host.shells.push({
         id: this.host.nextId++,
         x: tank.x + Math.cos(tank.dir) * (TANK_RADIUS + 0.1),

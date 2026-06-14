@@ -1,6 +1,8 @@
 /** Top-down renderer for players: terrain cache + entities + effects. */
 import {
   BASE_MAX_ARMOR_STOCK,
+  BASE_MAX_HP,
+  BASE_MAX_SHELL_STOCK,
   EMOTE_SHOW_MS,
   type Faction,
   hash32,
@@ -61,20 +63,21 @@ export class Renderer {
     this.ctx = canvas.getContext('2d')!;
     const fit = () => {
       this.dpr = Math.min(globalThis.devicePixelRatio || 1, 2.5);
-      this.vw = innerWidth;
-      this.vh = innerHeight;
+      // The CSS sizes the canvas to 100dvh/dvw, so its client box already
+      // tracks mobile Safari's collapsing toolbar — measure that rather than
+      // innerHeight (which on iOS includes the area behind the chrome).
+      this.vw = canvas.clientWidth || innerWidth;
+      this.vh = canvas.clientHeight || innerHeight;
       canvas.width = Math.round(this.vw * this.dpr);
       canvas.height = Math.round(this.vh * this.dpr);
-      if (canvas.style) {
-        canvas.style.width = `${this.vw}px`;
-        canvas.style.height = `${this.vh}px`;
-      }
       // zoom out a touch on small screens so enough battlefield is visible
       this.scale = Math.min(this.vw, this.vh) < 540 ? 22 : 34;
       this.vignette = null;
       this.fog = null;
     };
     addEventListener('resize', fit);
+    addEventListener('orientationchange', fit);
+    globalThis.visualViewport?.addEventListener('resize', fit);
     fit();
   }
 
@@ -123,7 +126,10 @@ export class Renderer {
 
     for (const b of state.bases) {
       const [px, py] = toScreen(b.x + 0.5, b.y + 0.5);
-      if (onScreen(px, py)) this.drawBase(px, py, b.owner, b.armorStock, now);
+      if (onScreen(px, py)) {
+        const supply = (b.armorStock + b.shellStock) / (BASE_MAX_ARMOR_STOCK + BASE_MAX_SHELL_STOCK);
+        this.drawBase(px, py, b.owner, b.hp, supply, now);
+      }
     }
 
     for (const p of state.pills) {
@@ -466,8 +472,12 @@ export class Renderer {
     }
   }
 
-  /** RTS HQ sprite, faction-tinted, flying a waving faction flag, with the armor-stock siege bar. */
-  private drawBase(px: number, py: number, owner: Faction | 'neutral', armorStock: number, now: number): void {
+  /**
+   * RTS HQ sprite, faction-tinted, flying a waving faction flag, with two
+   * gauges: fortification hp (faction-colored — shell it to 0 and the base
+   * falls neutral) over supply stock (amber — what it can dispense).
+   */
+  private drawBase(px: number, py: number, owner: Faction | 'neutral', hp: number, supply: number, now: number): void {
     const ctx = this.ctx;
     const s = this.scale * 1.25;
     const c = FACTION_COLORS[owner];
@@ -484,11 +494,16 @@ export class Renderer {
       this.drawFlag(px + s * 0.04, py - s * 0.18, c, FACTION_DARK[owner], now);
     }
 
-    // armor stock = siege bar
+    // fortification bar (hp): the thing you shell down / watch grow back
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(px - s / 2, py + s / 2 + 3, s, 3);
     ctx.fillStyle = c;
-    ctx.fillRect(px - s / 2, py + s / 2 + 3, (s * armorStock) / BASE_MAX_ARMOR_STOCK, 3);
+    ctx.fillRect(px - s / 2, py + s / 2 + 3, (s * hp) / BASE_MAX_HP, 3);
+    // supply bar: how much the base has to give (refuels slow as hp drops)
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(px - s / 2, py + s / 2 + 7, s, 2);
+    ctx.fillStyle = '#e8b44c';
+    ctx.fillRect(px - s / 2, py + s / 2 + 7, s * supply, 2);
   }
 
   /**

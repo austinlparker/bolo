@@ -5,7 +5,7 @@ import {
   TANK_FIRE_COOLDOWN,
   TANK_MAX_ARMOR,
   PILL_MAX_HP,
-  BASE_MAX_ARMOR_STOCK,
+  BASE_MAX_HP,
 } from '@bolo/shared';
 import { Terrain } from '@bolo/shared';
 import { addTankAt, makeWorld, setTile, step, stubRandom } from './world.test-utils';
@@ -127,21 +127,21 @@ describe('World shells & combat', () => {
   });
 
   describe('shell vs base', () => {
-    it('hostile base with armorStock>0 → stock drained, NOT captured', () => {
+    it('hostile base with hp>0 → fortifications battered, NOT captured', () => {
       const w = makeWorld();
       for (let dx = -5; dx <= 5; dx++) setTile(w, 128 + dx, 128, Terrain.Grass);
       const base = w.bases.find((b) => b.owner !== 'dawn')!;
       base.x = 131;
       base.y = 128;
       base.owner = 'dusk';
-      base.armorStock = BASE_MAX_ARMOR_STOCK;
+      base.hp = BASE_MAX_HP;
       const shooter = addTankAt(w, { x: 128.5, y: 128.5, dir: 0, faction: 'dawn', shells: 20 });
-      const stockBefore = base.armorStock;
+      const hpBefore = base.hp;
       w.setInput(shooter.id, { accel: 0, turn: 0, fire: true });
       step(w, null, 1); // fire
       w.setInput(shooter.id, { accel: 0, turn: 0, fire: false });
       step(w, null, 5); // shell reaches base
-      expect(base.armorStock).toBe(stockBefore - SHELL_DAMAGE);
+      expect(base.hp).toBe(hpBefore - SHELL_DAMAGE);
       expect(base.owner).toBe('dusk'); // not captured
     });
   });

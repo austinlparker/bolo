@@ -48,7 +48,15 @@ export class BuilderSystem {
     if (!tank || !tank.alive) return 'not alive';
     const b = tank.builder;
     if (b.phase !== 'in_tank') return 'builder is out';
-    if (tx < 0 || ty < 0 || tx >= W || ty >= W) return 'out of bounds';
+    // Number.isInteger also rejects NaN/Infinity, which would otherwise slip
+    // through the < / >= comparisons (every comparison with NaN is false) and
+    // index the terrain array with a garbage key.
+    if (!Number.isInteger(tx) || !Number.isInteger(ty) || tx < 0 || ty < 0 || tx >= W || ty >= W) {
+      return 'out of bounds';
+    }
+    // Don't let the builder pave/wall/mine over a base pad: walls would block
+    // the pad entirely (no refuel, no capture) and shells couldn't reach it.
+    if (this.host.bases.some((base) => base.x === tx && base.y === ty)) return 'cannot build on a base';
     const dist = Math.hypot(tx + 0.5 - tank.x, ty + 0.5 - tank.y);
     if (dist > BUILDER_MAX_RANGE) return 'too far away';
 
@@ -200,6 +208,12 @@ export class BuilderSystem {
   private completeBuilderJob(tank: Tank): void {
     const o = tank.builder.order;
     if (!o) return;
+    // Belt-and-suspenders: order() already rejects base tiles, but guard again
+    // here in case the world changed between order and completion.
+    if (o.kind !== 'harvest' && this.host.bases.some((base) => base.x === o.tx && base.y === o.ty)) {
+      this.refundOrder(tank);
+      return;
+    }
     const t = this.host.terrain[idx(o.tx, o.ty)] as Terrain;
     switch (o.kind) {
       case 'harvest':

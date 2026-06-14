@@ -12,7 +12,7 @@ import type { Base, BuilderOrderKind, Pillbox, PlayerProfile, Tank, WarInfo, War
  * (deploys iterate fast and stale tabs otherwise play a skewed protocol —
  * an early playtester's whole first session was an unversioned old bundle).
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 // ---------- client -> server ----------
 
@@ -143,6 +143,9 @@ export interface ShellView {
 export type GameEvent =
   | { e: 'kill'; killer: string; victim: string; cause: 'shell' | 'mine' | 'pillbox' | 'sea' }
   | { e: 'base_captured'; baseId: number; by: Owner; handle: string }
+  | { e: 'base_neutralized'; baseId: number; by: Owner }
+  /** dominance countdown started (endsAt set) or broken (faction null) */
+  | { e: 'dominance'; faction: Faction | null; endsAt: number | null }
   | { e: 'pill_captured'; pillId: number; by: Faction; handle: string }
   | { e: 'pill_placed'; pillId: number; x: number; y: number; by: Faction }
   | { e: 'builder_killed'; tankId: number }
@@ -233,7 +236,8 @@ export interface ErrorMsg {
     | 'not_in_game'
     | 'rate_limited'
     | 'builder_busy'
-    | 'invalid_order';
+    | 'invalid_order'
+    | 'at_capacity';
   msg: string;
 }
 

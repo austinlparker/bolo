@@ -34,6 +34,14 @@ import { WarManager } from './war-manager';
 
 const PERSIST_EVERY_TICKS = TICK_HZ * 30;
 const MSG_BUDGET_PER_TICK = 8; // ~80 msgs/sec ceiling per connection
+// Per-tick work and memory scale with connection count, and spectators need no
+// auth — without a ceiling, an attacker can open unlimited sockets and starve
+// the single shared world. Generous relative to the ~12-tank design scale.
+const MAX_SESSIONS = 80;
+const MAX_SPECTATORS = 64;
+
+/** Builder order kinds, as a runtime guard for untrusted wire input. */
+const BUILDER_KINDS: ReadonlySet<string> = new Set(['harvest', 'road', 'wall', 'boat', 'pillbox', 'mine']);
 
 export class GameDO implements DurableObject {
   private state: DurableObjectState;
@@ -220,6 +228,14 @@ export class GameDO implements DurableObject {
     client?: string,
   ): Promise<void> {
     const world = this.world!;
+    // Capacity guard (closes the unauthenticated-spectator flood vector). Reject
+    // before auth/addTank so an over-cap socket never enters the tick loop.
+    const { spectators } = this.store.playerSpectatorCounts();
+    if (this.store.size >= MAX_SESSIONS || (role === 'spectator' && spectators >= MAX_SPECTATORS)) {
+      this.store.send(session, { t: 'error', code: 'at_capacity', msg: 'world is at capacity' });
+      session.ws.close(4002, 'at capacity');
+      return;
+    }
     if (role === 'player') {
       const payload = token ? await verifyToken(sessionSecret(this.env), token) : null;
       if (!payload) {
@@ -294,6 +310,10 @@ export class GameDO implements DurableObject {
         }
         break;
       case 'builder': {
+        if (!BUILDER_KINDS.has(msg.order) || !Number.isFinite(msg.x) || !Number.isFinite(msg.y)) {
+          this.store.send(session, { t: 'error', code: 'invalid_order', msg: 'malformed builder order' });
+          break;
+        }
         const err = world.builderOrder(
           session.tankId,
           msg.order as BuilderOrderKind,
@@ -324,7 +344,15 @@ export class GameDO implements DurableObject {
     let tickCounter = 0;
     this.interval = setInterval(() => {
       tickCounter++;
-      this.tick(tickCounter);
+      // The whole world for every connected player lives in this one loop. A
+      // single uncaught throw (from crafted input or a corrupted entity) would
+      // otherwise re-fire every 100ms and freeze the world for everyone with no
+      // recovery — so isolate it: log and skip the bad tick, keep the loop alive.
+      try {
+        this.tick(tickCounter);
+      } catch (err) {
+        console.error(`tick ${tickCounter} (war ${this.world?.warNumber}) threw`, err);
+      }
     }, TICK_MS);
   }
 
@@ -353,7 +381,12 @@ export class GameDO implements DurableObject {
       if (tank.npc) world.setInput(tank.id, this.npc.think(world, tank));
     }
 
-    const warMinutes = (Date.now() - world.startedAt) / 60000;
+    // War age is SIMULATED time, not wall-clock: the sim freezes when no socket
+    // is connected, so wall-clock would jump warMinutes forward across an idle
+    // gap and slam bases with full late-war attrition (and satisfy the victory
+    // min-duration) on the first reconnect tick. Tick-based also matches the
+    // dominance countdown, which is already tick-based.
+    const warMinutes = world.tick / TICK_HZ / 60;
     const result = world.doTick(warMinutes);
 
     if (this.statsSink.enabled && result.stats.length) {
@@ -424,6 +457,7 @@ export class GameDO implements DurableObject {
   private startNewWar(): void {
     const old = this.world!;
     this.world = this.war.startNewWar(old, this.store);
+    this.npc.reset(); // the new World restarts tank ids at 1; drop stale AI memory
     this.phase = 'active';
     this.nextWarAt = null;
     this.npc.balanceNpcs(this.world);

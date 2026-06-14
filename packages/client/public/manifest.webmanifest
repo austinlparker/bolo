@@ -1,0 +1,15 @@
+{
+  "name": "ATBOLO — the forever war",
+  "short_name": "ATBOLO",
+  "description": "A persistent-world, two-faction Bolo tank war that grinds on around the clock.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#0c0e12",
+  "theme_color": "#0c0e12",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

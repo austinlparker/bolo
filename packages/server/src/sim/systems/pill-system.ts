@@ -12,7 +12,6 @@ import {
   PILL_MAX_HP,
   PILL_RANGE,
   PILL_REGEN_SECONDS,
-  SHELL_SPEED,
   Terrain,
   TICK_HZ,
 } from '@bolo/shared';
@@ -59,7 +58,7 @@ export class PillSystem {
         const px = pill.x + 0.5;
         const py = pill.y + 0.5;
         // simple leading: aim at where the target will be in flight-time
-        const t = bestD / SHELL_SPEED;
+        const t = bestD / this.host.tuning.shellSpeed;
         const ax = target.x + Math.cos(target.dir) * target.speed * t;
         const ay = target.y + Math.sin(target.dir) * target.speed * t;
         const dir = Math.atan2(ay - py, ax - px);

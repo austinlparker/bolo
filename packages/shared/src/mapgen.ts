@@ -7,6 +7,8 @@
 import {
   BASES_PER_FACTION_AT_START,
   BASE_MAX_ARMOR_STOCK,
+  BASE_MAX_HP,
+  BASE_NEUTRAL_START_HP,
   BASE_MAX_MINE_STOCK,
   BASE_MAX_SHELL_STOCK,
   BASE_START_STOCK,
@@ -129,6 +131,7 @@ export function generateMap(seed: number): GeneratedMap {
         x: bx,
         y: by,
         owner,
+        hp: starter ? BASE_MAX_HP : BASE_NEUTRAL_START_HP,
         armorStock: stock(BASE_MAX_ARMOR_STOCK),
         shellStock: stock(BASE_MAX_SHELL_STOCK),
         mineStock: stock(BASE_MAX_MINE_STOCK),

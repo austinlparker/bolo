@@ -67,6 +67,20 @@ Simulate a full NPC-only war headlessly (great for balance work):
 pnpm --filter @bolo/server smoke <seed> <max-minutes>
 ```
 
+Run the sim test suite (base capture, war lifecycle, tank handling):
+
+```sh
+pnpm --filter @bolo/server test
+```
+
+Dev-only handling tool (never shipped in production builds):
+
+- **control rig** — http://localhost:5173/rig runs four copies of the real
+  sim side by side with different handling variants, all driven by the same
+  keys (with simulated input latency). Promote the variant that feels right
+  to baseline, mutate the rest around it, and export the winner as JSON to
+  paste into `constants.ts`.
+
 ## Deploy (Cloudflare)
 
 One-time setup:

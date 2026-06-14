@@ -69,10 +69,14 @@ export class Hud {
       </div>
       <div id="chat-toggle" class="hud kbtn kbtn-round">💬</div>
       <div id="touch-menu" class="hud">
-        <div id="tm-help" class="kbtn" title="field manual">?</div>
-        <div id="tm-notes" class="kbtn" title="war bulletins">📜</div>
-        <a id="tm-board" class="kbtn" href="/leaderboard" title="career leaderboard">🏆</a>
-        <div id="tm-leave" class="kbtn" title="leave the war">⏏</div>
+        <div id="tm-toggle" class="kbtn kbtn-round" title="menu">⋯</div>
+        <div id="tm-panel">
+          <div id="tm-help" class="tm-item">📖 field manual</div>
+          <div id="tm-notes" class="tm-item">📜 war bulletins</div>
+          <a id="tm-board" class="tm-item" href="/leaderboard">🏆 leaderboard</a>
+          <div id="tm-fs" class="tm-item">⛶ fullscreen</div>
+          <div id="tm-leave" class="tm-item">⏏ leave the war</div>
+        </div>
       </div>
       <canvas id="hud-minimap" class="hud" width="180" height="180"></canvas>
       <div id="banner"></div>
@@ -92,16 +96,19 @@ export class Hud {
           <div class="help-cols">
             <div class="help-touch">
               <h3>TOUCH CONTROLS</h3>
-              <div class="help-row"><span>drive — direction is heading, deflection is throttle</span><span class="keys">left stick</span></div>
-              <div class="help-row"><span>aim &amp; fire — hull swings to the stick, fires on bear</span><span class="keys">right stick</span></div>
+              <div class="help-row"><span>throttle — push up/down to set a speed; it holds</span><span class="keys">▲▼ left</span></div>
+              <div class="help-row"><span>stop — zero the throttle</span><span class="keys">STOP</span></div>
+              <div class="help-row"><span>turn the hull — steer, or pivot in place</span><span class="keys">◀▶ right</span></div>
+              <div class="help-row"><span>fire along the hull (the gun is fixed)</span><span class="keys">FIRE</span></div>
               <div class="help-row"><span>build — arm a tool, then tap the map</span><span class="keys">⚒</span></div>
               <div class="help-row"><span>build on your own tile (mines go here)</span><span class="keys">⌖</span></div>
-              <div class="help-row"><span>chat / emote</span><span class="keys">💬 🙂</span></div>
+              <div class="help-row"><span>chat / emote / menu</span><span class="keys">💬 🙂 ⋯</span></div>
               <div class="help-row"><span>enlarge the minimap</span><span class="keys">tap it</span></div>
             </div>
             <div>
               <h3>DRIVING</h3>
-              <div class="help-row"><span>accelerate / reverse</span><span class="keys"><kbd>W</kbd> <kbd>S</kbd></span></div>
+              <div class="help-row"><span>throttle up / down — sets a speed; it holds</span><span class="keys"><kbd>W</kbd> <kbd>S</kbd></span></div>
+              <div class="help-row"><span>stop — zero the throttle</span><span class="keys"><kbd>X</kbd></span></div>
               <div class="help-row"><span>turn — <em>tap</em> for fine aim, hold to sweep</span><span class="keys"><kbd>A</kbd> <kbd>D</kbd></span></div>
               <div class="help-row"><span>fire</span><span class="keys"><kbd>space</kbd></span></div>
               <div class="help-row"><span>gun range up / down — shells land on the reticle</span><span class="keys"><kbd>⇧↑</kbd> <kbd>⇧↓</kbd> or mouse back/fwd</span></div>
@@ -120,7 +127,9 @@ export class Hud {
               <div class="help-row"><span>build on your own tile</span><span class="keys"><kbd>V</kbd></span></div>
               <div class="help-row"><span>recall builder (refunds)</span><span class="keys"><kbd>R</kbd></span></div>
               <h3>THE WAR</h3>
-              <div class="help-row"><span>capture bases by parking on them</span><span></span></div>
+              <div class="help-row"><span>claim neutral bases by parking on them</span><span></span></div>
+              <div class="help-row"><span>shell enemy bases until their defenses fall, then claim</span><span></span></div>
+              <div class="help-row"><span>bases fortify &amp; restock over time — supply slows when battered</span><span></span></div>
               <div class="help-row"><span>refuel armor/shells/mines at friendly bases</span><span></span></div>
               <div class="help-row"><span>dead pillboxes can be salvaged &amp; re-placed</span><span></span></div>
             </div>
@@ -206,14 +215,84 @@ export class Hud {
     };
     this.toolsEl.appendChild(leave);
 
-    // touch menu: the desktop toolbar above is display:none on touch, so
-    // help / leaderboard / leave need their own affordances (playtest:
-    // "there's no help button on tablet", "leave button is also absent")
-    document.getElementById('tm-help')!.onclick = () => this.toggleHelp();
-    document.getElementById('tm-notes')!.onclick = () => this.toggleNotes();
+    // touch menu: the desktop toolbar is display:none on touch, so help /
+    // bulletins / leaderboard / leave / fullscreen collapse into one ⋯ button
+    // and a slide-out panel that lives up by the minimap, off the thumb zones.
+    const menu = document.getElementById('touch-menu')!;
+    const closeMenu = () => menu.classList.remove('open');
+    document.getElementById('tm-toggle')!.onclick = (ev) => {
+      ev.stopPropagation();
+      menu.classList.toggle('open');
+    };
+    // tap the dimmed backdrop (the overlay itself, not the panel) to close
+    menu.addEventListener('click', (ev) => {
+      if (ev.target === menu) closeMenu();
+    });
+    document.getElementById('tm-help')!.onclick = () => {
+      closeMenu();
+      this.toggleHelp();
+    };
+    document.getElementById('tm-notes')!.onclick = () => {
+      closeMenu();
+      this.toggleNotes();
+    };
     document.getElementById('tm-leave')!.onclick = () => {
       location.href = '/map';
     };
+    // Fullscreen: the Fullscreen API works on Android Chrome, iPad and desktop,
+    // but iPhone Safari only has partial support — a web page there cannot hide
+    // the browser chrome. The reliable iPhone path is "Add to Home Screen"
+    // (standalone PWA, enabled by the apple-mobile-web-app-capable meta), so we
+    // try the API and otherwise show those instructions.
+    const fsBtn = document.getElementById('tm-fs')!;
+    const fsEl = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void>;
+    };
+    const fsDoc = document as Document & {
+      webkitExitFullscreen?: () => Promise<void>;
+      webkitFullscreenElement?: Element;
+    };
+    const standalone =
+      (navigator as { standalone?: boolean }).standalone === true ||
+      matchMedia('(display-mode: standalone)').matches ||
+      matchMedia('(display-mode: fullscreen)').matches;
+    const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent));
+    const addToHomeHint = () =>
+      this.showToast(
+        isIOS
+          ? 'tap Share ⬆ → "Add to Home Screen", then open ATBOLO from there for fullscreen'
+          : 'install this page (browser menu → install / add to home screen) for fullscreen',
+        5200,
+      );
+    if (standalone) {
+      // already chromeless (launched from a home-screen icon)
+      fsBtn.style.display = 'none';
+    } else {
+      fsBtn.onclick = () => {
+        closeMenu();
+        const fsActive = document.fullscreenElement || fsDoc.webkitFullscreenElement;
+        if (fsActive) {
+          void (fsDoc.exitFullscreen?.() ?? fsDoc.webkitExitFullscreen?.());
+          return;
+        }
+        const req = fsEl.requestFullscreen ?? fsEl.webkitRequestFullscreen;
+        if (!req) {
+          addToHomeHint();
+          return;
+        }
+        try {
+          const p = req.call(fsEl) as Promise<void> | undefined;
+          // partial-support browsers (iPhone Safari) reject — fall back to the hint
+          p?.catch(() => addToHomeHint());
+        } catch {
+          addToHomeHint();
+        }
+      };
+    }
+    // tap anywhere else dismisses the open menu
+    document.addEventListener('pointerdown', (ev) => {
+      if (menu.classList.contains('open') && !menu.contains(ev.target as Node)) closeMenu();
+    });
 
     const notesOverlay = document.getElementById('notes-overlay')!;
     notesOverlay.onclick = (ev) => {
@@ -373,6 +452,8 @@ export class Hud {
     const unseen = hasUnseenBulletins();
     document.getElementById('tool-notes')?.classList.toggle('unread', unseen);
     document.getElementById('tm-notes')?.classList.toggle('unread', unseen);
+    // surface the unread dot on the collapsed ⋯ button too (the panel's hidden)
+    document.getElementById('tm-toggle')?.classList.toggle('unread', unseen);
   }
 
   // ---------- toast ----------
@@ -570,11 +651,21 @@ export function warLine(war: WarInfo, bases?: { owner: Owner }[]): string {
     const s = Math.max(0, Math.ceil((war.nextWarAt - Date.now()) / 1000));
     return `WAR ${war.warNumber} OVER — next war in ${s}s`;
   }
+  let dominance = '';
+  if (war.dominance) {
+    const left = Math.max(0, war.dominance.endsAt - Date.now());
+    const m = Math.floor(left / 60000);
+    const sec = Math.floor((left % 60000) / 1000);
+    dominance =
+      ` · <span class="f-${war.dominance.faction}">⚑ ${FACTION_NAMES[war.dominance.faction]} dominates` +
+      ` — victory in ${m}:${String(sec).padStart(2, '0')}</span>`;
+  }
   return (
     `WAR ${war.warNumber} · ` +
     `<span class="f-dawn">dawn ${c.dawn}</span> / ` +
     `<span class="f-neutral">free ${c.neutral}</span> / ` +
-    `<span class="f-dusk">dusk ${c.dusk}</span> bases`
+    `<span class="f-dusk">dusk ${c.dusk}</span> bases` +
+    dominance
   );
 }
 

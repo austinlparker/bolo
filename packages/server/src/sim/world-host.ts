@@ -3,12 +3,18 @@
  * The World class implements this, giving systems access to shared state
  * (via SimContext fields) and cross-system operations.
  */
-import type { Tank } from '@bolo/shared';
+import type { Base, Owner, Tank, TankTuning } from '@bolo/shared';
 import type { SimContext } from './context';
 
 export interface WorldHost extends SimContext {
   /** ID counter for generating unique shell/pill IDs. */
   nextId: number;
+
+  /** Tank-handling parameters; the /rig dev tool overrides them per-pane. */
+  tuning: TankTuning;
+
+  /** Fortifications breached: the base stands neutral until someone claims it. */
+  neutralizeBase(base: Base, by: Owner): void;
 
   // queries
   tileAt(x: number, y: number): import('@bolo/shared').Terrain;

@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
+  BASE_CAPTURE_HP,
   BASE_MAX_ARMOR_STOCK,
+  BASE_MAX_HP,
   BASE_MAX_MINE_STOCK,
   BASE_MAX_SHELL_STOCK,
   BASE_REFUEL_INTERVAL,
   BASE_REFUEL_RADIUS,
-  BASE_SIEGE_DAMAGE,
   BASE_SIEGE_DRAIN_INTERVAL,
   PILL_COOLDOWN_ANGRY,
   PILL_COOLDOWN_CALM,
@@ -216,33 +217,35 @@ describe('World base economy', () => {
     expect(tank.armor).toBeGreaterThan(armorBefore);
   });
 
-  it('siege drain: enemy on hostile base with stock → stock drains, tank takes damage', () => {
+  it('siege drain: enemy on hostile base grinds hp down, tank takes damage', () => {
     const w = makeWorld();
     for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) setTile(w, 128 + dx, 128 + dy, Terrain.Road);
     const base = w.bases[0];
     base.x = 128;
     base.y = 128;
     base.owner = 'dawn';
-    base.armorStock = BASE_MAX_ARMOR_STOCK;
+    base.hp = BASE_MAX_HP;
     const enemy = addTankAt(w, { x: 128.5, y: 128.5, faction: 'dusk', armor: TANK_MAX_ARMOR });
     const armorBefore = enemy.armor;
-    const stockBefore = base.armorStock;
+    const hpBefore = base.hp;
     step(w, null, Math.ceil(BASE_SIEGE_DRAIN_INTERVAL / 0.1) + 1);
-    expect(base.armorStock).toBeLessThan(stockBefore);
+    expect(base.hp).toBeLessThan(hpBefore);
     expect(enemy.armor).toBeLessThanOrEqual(armorBefore);
   });
 
-  it('siege capture: enemy on hostile base with stock==0 → owner flips', () => {
+  it('siege breach: enemy grinds hp to 0, base falls neutral, then the attacker claims it', () => {
     const w = makeWorld();
     for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) setTile(w, 128 + dx, 128 + dy, Terrain.Road);
     const base = w.bases[0];
     base.x = 128;
     base.y = 128;
     base.owner = 'dawn';
-    base.armorStock = 0;
-    const enemy = addTankAt(w, { x: 128.5, y: 128.5, faction: 'dusk' });
-    step(w, null, Math.ceil(BASE_SIEGE_DRAIN_INTERVAL / 0.1) + 1);
+    base.hp = 1; // one siege tick from breach
+    addTankAt(w, { x: 128.5, y: 128.5, faction: 'dusk' });
+    // breach (hp→0, neutral) then the attacker on the pad claims the neutral base
+    step(w, null, Math.ceil(BASE_SIEGE_DRAIN_INTERVAL / 0.1) + 2);
     expect(base.owner).toBe('dusk');
+    expect(base.hp).toBe(BASE_CAPTURE_HP); // a fresh claim digs in from token hp
   });
 
   it('passive regen: owned uncontested base regenerates over time', () => {

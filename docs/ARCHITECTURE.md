@@ -77,7 +77,10 @@ log back in, but the world (and your profile) remembers everything else.
 
 1. `World(warNumber, seed)` generates the island (see below) with 3 starting
    bases per faction and 8 neutral.
-2. Victory check (all 14 bases, ≥10 min in): record history, broadcast
+2. Victory check (≥10 min in): all 14 bases, or a dominance countdown
+   completing (≥12 bases held continuously for 10 minutes). No time cap;
+   late-war attrition (fortify/restock decay past 90 minutes) keeps
+   marathon wars from stalemating. On victory: record history, broadcast
    `war_over`, enter a 2-minute intermission.
 3. New war: `seed' = hash(seed, warNumber+1)` — geography is a chain, every
    island descended from the last. Connected players are re-seated and get a
