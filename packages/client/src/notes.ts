@@ -16,6 +16,20 @@ export interface Bulletin {
 
 export const BULLETINS: Bulletin[] = [
   {
+    id: 2,
+    date: '2026-06-13',
+    title: 'THE REFIT DISPATCHES',
+    items: [
+      'driving split in two: a throttle on the left that you set and forget — it holds your speed — and a turn stick on the right. throttle up, let go, keep rolling. STOP (or X on a keyboard) cuts it to zero.',
+      'FIRE moved next to the throttle. with cruise holding your speed, the left thumb is free to shoot while the right thumb steers — come about and fire in the same breath.',
+      'tanks turn slower now. the old rate spun like a turret on ice; this one has some mass behind it.',
+      'bases have fortifications. shell an enemy base until its defenses break and it falls neutral, then drive onto the pad to claim it. owned bases dig in and restock over time, and a battered base supplies its tanks more slowly.',
+      'when one faction holds most of the island a victory countdown starts — break their grip on a single base and the clock resets.',
+      'the war tally lives on the minimap now: colored base counts with a ⚑ countdown when someone is running away with it.',
+      'mobile: the ⋯ menu actually opens, the control buttons are all one size, and the whole layout works in portrait as well as landscape.',
+    ],
+  },
+  {
     id: 1,
     date: '2026-06-12',
     title: 'THE PLAYTEST DISPATCHES',
