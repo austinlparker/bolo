@@ -10,12 +10,14 @@ enabled = true
 head_sampling_rate = 1
 
 # The game loop runs on setInterval inside the DO, so CPU accrues against a
-# single invocation context instead of resetting per-request — under the 30s
-# budget the DO was hard-reset (dropping every live socket) roughly hourly.
-# Per-tick work is kept cheap instead (see sim/npc.ts pathfinding, 4-7x);
-# raising the budget needs a paid plan:
-#   [limits]
-#   cpu_ms = 300000  # requires Workers Standard; rejected on Free (100328)
+# single invocation context instead of resetting per-request. The default
+# 30s CPU budget (which applies even on Workers Paid unless overridden) caused
+# the DO to be hard-reset, dropping every live socket roughly hourly.
+# Per-tick work is kept cheap (see sim/npc.ts pathfinding); raising the budget
+# to the 5-minute maximum eliminates the resets entirely. Account is on Workers
+# Standard (paid), which is required for this setting (Free rejects with 100328).
+[limits]
+cpu_ms = 300000
 
 # The whole world lives in a single Durable Object instance ("world").
 # At O(tens) of concurrent players a single DO at 10Hz is comfortable.
