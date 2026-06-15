@@ -97,7 +97,24 @@ export interface KillStat {
   kill_dist_tiles?: number;
 }
 
-export type StatEvent = ShotStat | KillStat;
+export interface BaseCaptureStat {
+  name: 'base_capture';
+  base_id: number;
+  by_faction: string;
+  capturer_npc?: boolean;
+  capturer_client?: string;
+  base_was_neutral: boolean;
+}
+
+export interface WarStat {
+  name: 'war_end';
+  winner: string;
+  duration_minutes: number;
+  total_kills: number;
+  total_captures: number;
+}
+
+export type StatEvent = ShotStat | KillStat | BaseCaptureStat | WarStat;
 
 const W = MAP_SIZE;
 
@@ -352,6 +369,7 @@ export class World implements WorldHost {
     tank.alive = true;
     tank.armor = TANK_START_ARMOR;
     tank.engagedTick = undefined;
+    tank.lastDamagedTick = undefined;
     tank.turnSpeed = 0;
     tank.shells = TANK_START_SHELLS;
     tank.mines = TANK_START_MINES;

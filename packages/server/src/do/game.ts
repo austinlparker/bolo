@@ -476,6 +476,16 @@ export class GameDO implements DurableObject {
 
   private endWar(winner: Faction): void {
     const world = this.world!;
+    // emit war-end telemetry before the intermission transition
+    this.statsSink.push({
+      name: 'war_end',
+      winner,
+      duration_minutes: Math.round(world.tick / TICK_HZ / 60),
+      total_kills: [...world.tanks.values()].reduce((s, t) => s + t.kills, 0),
+      total_captures: [...world.tanks.values()].reduce((s, t) => s + t.caps, 0),
+      war_number: world.warNumber,
+    });
+    this.statsSink.flush();
     const { nextWarAt } = this.war.endWar(world, winner, this.store);
     this.phase = 'intermission';
     this.nextWarAt = nextWarAt;

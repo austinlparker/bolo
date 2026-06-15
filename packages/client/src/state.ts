@@ -16,6 +16,13 @@ import {
   type StateMsg,
   type TankView,
   TICK_MS,
+  TANK_MAX_SPEED,
+  TANK_ACCEL,
+  TANK_ACCEL_CURVE,
+  TANK_BRAKE,
+  TANK_TURN_RATE,
+  TANK_TURN_ACCEL,
+  TANK_REVERSE_FACTOR,
   type WarInfo,
   type WelcomeMsg,
 } from '@bolo/shared';
@@ -36,7 +43,7 @@ export interface InterpTank {
  * Render this far in the past so network jitter is absorbed by the snapshot
  * buffer instead of freezing motion until the next packet lands.
  */
-const RENDER_DELAY_MS = TICK_MS * 1.2;
+const RENDER_DELAY_MS = TICK_MS * 2;
 
 export interface Boom {
   x: number;
@@ -68,6 +75,18 @@ export class GameState {
   feed: string[] = [];
   /** active emote bubbles: tankId -> { kind, at } */
   emotes = new Map<number, { kind: string; at: number }>();
+
+  // ---------- client-side prediction (own tank) ----------
+  /** current input the player is sending to the server */
+  myInput: { accel: number; turn: number; fire: boolean } = { accel: 0, turn: 0, fire: false };
+  /**
+   * Predicted state for the player's own tank: last authoritative snapshot
+   * position/dir/speed from the server, integrated forward by current input
+   * each frame so the camera and own-tank sprite react instantly.
+   */
+  private pred: { x: number; y: number; dir: number; speed: number; turnSpeed: number; at: number } | null = null;
+  /** performance.now() of the last server snapshot used to seed prediction */
+  private predSeedAt = 0;
   /**
    * Terrain change tracking with multiple consumers (main view + minimap
    * caches): a version bump means "repaint everything"; the log appends
@@ -111,9 +130,13 @@ export class GameState {
       if (existing) {
         existing.cur = tv;
         existing.snaps.push({ view: tv, at: now });
-        if (existing.snaps.length > 5) existing.snaps.shift();
+        if (existing.snaps.length > 10) existing.snaps.shift();
       } else {
         this.tanks.set(tv.id, { cur: tv, snaps: [{ view: tv, at: now }] });
+      }
+      // reconcile prediction when our own tank's snapshot arrives
+      if (this.you && tv.id === this.you.tankId) {
+        this.reconcilePrediction(tv, now);
       }
     }
     for (const id of [...this.tanks.keys()]) {
@@ -210,6 +233,117 @@ export class GameState {
       y: a.view.y + (b.view.y - a.view.y) * t,
       dir: a.view.dir + angleDelta(a.view.dir, b.view.dir) * t,
     };
+  }
+
+  /**
+   * Predicted position for the player's OWN tank: dead-reckon from the last
+   * server snapshot using the current input, integrating forward to `now`.
+   * This gives instant visual response to controls without waiting for the
+   * server round-trip + render delay. Other tanks still use lerpTank().
+   */
+  predictedSelf(now: number): { x: number; y: number; dir: number } {
+    const snap = this.me();
+    if (!snap || !this.you || !snap.alive) {
+      // no tank or dead: reset prediction, fall back to interpolation
+      this.pred = null;
+      const it = this.you ? this.tanks.get(this.you.tankId) : undefined;
+      return it ? this.lerpTank(it, now) : { x: MAP_SIZE / 2, y: MAP_SIZE / 2, dir: 0 };
+    }
+    if (!this.pred) {
+      // seed from latest server snapshot
+      this.pred = { x: snap.x, y: snap.y, dir: snap.dir, speed: snap.speed, turnSpeed: 0, at: now };
+      this.predSeedAt = now;
+    }
+    // integrate forward from the last frame to now
+    if (this.pred.at < now) {
+      // step in small increments for stability (server uses DT = 1/TICK_HZ)
+      const stepDt = 1 / 10; // 100ms steps matching server tick
+      let remaining = (now - this.pred.at) / 1000;
+      while (remaining > 0) {
+        const dt = Math.min(stepDt, remaining);
+        this.predStep(dt);
+        remaining -= dt;
+      }
+      this.pred.at = now;
+    }
+    return { x: this.pred.x, y: this.pred.y, dir: this.pred.dir };
+  }
+
+  /**
+   * One integration step replicating the server's tank movement model
+   * (tank-system.ts): rotational inertia + terrain-agnostic accel toward
+   * target speed. Collision/terrain checks are omitted (we can't know the
+   * authoritative terrain state from here without full replication); the
+   * server corrects any divergence when the next snapshot arrives.
+   */
+  private predStep(dt: number): void {
+    if (!this.pred) return;
+    const p = this.pred;
+    const input = this.myInput;
+
+    // --- turning: same inertia model as tank-system.ts ---
+    const targetRate = Math.max(-1, Math.min(1, input.turn)) * TANK_TURN_RATE;
+    if (targetRate * p.turnSpeed < 0) p.turnSpeed = 0;
+    if (Math.abs(targetRate) <= Math.abs(p.turnSpeed)) {
+      p.turnSpeed = targetRate;
+    } else {
+      p.turnSpeed = targetRate > 0
+        ? Math.min(targetRate, p.turnSpeed + TANK_TURN_ACCEL * dt)
+        : Math.max(targetRate, p.turnSpeed - TANK_TURN_ACCEL * dt);
+    }
+    p.dir += p.turnSpeed * dt;
+    if (p.dir > Math.PI) p.dir -= 2 * Math.PI;
+    else if (p.dir < -Math.PI) p.dir += 2 * Math.PI;
+
+    // --- speed: accel toward target speed fraction (ignores terrain) ---
+    const maxSpeed = TANK_MAX_SPEED;
+    const target = input.accel >= 0
+      ? input.accel * maxSpeed
+      : input.accel * maxSpeed * TANK_REVERSE_FACTOR;
+    const opposing = (input.accel < 0 && p.speed > 0) || (input.accel > 0 && p.speed < 0);
+    const rate = opposing
+      ? TANK_BRAKE
+      : TANK_ACCEL * (1 - TANK_ACCEL_CURVE * Math.min(1, Math.abs(p.speed) / maxSpeed));
+    if (p.speed < target) p.speed = Math.min(target, p.speed + rate * dt);
+    else if (p.speed > target) p.speed = Math.max(target, p.speed - rate * dt);
+
+    // --- movement ---
+    if (p.speed !== 0) {
+      p.x += Math.cos(p.dir) * p.speed * dt;
+      p.y += Math.sin(p.dir) * p.speed * dt;
+    }
+  }
+
+  /**
+   * Reconcile prediction with authoritative server state: snap to the
+   * server position when a new snapshot arrives for our own tank. The
+   * prediction continues forward from there on the next frame.
+   */
+  private reconcilePrediction(tv: TankView, now: number): void {
+    if (!this.pred) return;
+    // snap to server position; keep predicted turnSpeed/speed as those are
+    // continuously integrated. A large jump (wall hit we didn't predict)
+    // is absorbed immediately.
+    const dx = tv.x - this.pred.x;
+    const dy = tv.y - this.pred.y;
+    const drift = Math.hypot(dx, dy);
+    if (drift > 0.5) {
+      // large correction: snap hard
+      this.pred.x = tv.x;
+      this.pred.y = tv.y;
+      this.pred.dir = tv.dir;
+      this.pred.speed = tv.speed;
+    } else {
+      // small drift: blend toward server (absorb smoothly over ~2 frames)
+      const blend = 0.3;
+      this.pred.x += dx * blend;
+      this.pred.y += dy * blend;
+      // angle: take the shorter way
+      const da = angleDelta(this.pred.dir, tv.dir);
+      this.pred.dir += da * blend;
+      this.pred.speed += (tv.speed - this.pred.speed) * blend;
+    }
+    this.pred.at = now;
   }
 }
 

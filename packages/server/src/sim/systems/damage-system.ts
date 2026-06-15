@@ -115,7 +115,13 @@ export class DamageSystem {
 
   damageTank(tank: Tank, amount: number, cause: 'shell' | 'mine' | 'pillbox' | 'sea', killer: Tank | null): void {
     if (!tank.alive) return;
-    if (tank.engagedTick === undefined) tank.engagedTick = this.host.tick;
+    const tick = this.host.tick;
+    // Reset engagement if no damage for 10 seconds, so a tank that took a
+    // stray hit and drove off doesn't produce a multi-minute TTK outlier.
+    if (tank.engagedTick === undefined || (tank.lastDamagedTick !== undefined && tick - tank.lastDamagedTick > TICK_HZ * 10)) {
+      tank.engagedTick = tick;
+    }
+    tank.lastDamagedTick = tick;
     tank.armor -= amount;
     if (tank.armor <= 0) this.killTank(tank, cause, killer);
   }
@@ -136,6 +142,7 @@ export class DamageSystem {
       kill_dist_tiles: killer ? round2stat(Math.hypot(killer.x - tank.x, killer.y - tank.y)) : undefined,
     });
     tank.engagedTick = undefined;
+    tank.lastDamagedTick = undefined;
     tank.alive = false;
     tank.deaths++;
     tank.respawnTick = tick + TANK_RESPAWN_SECONDS * TICK_HZ;
