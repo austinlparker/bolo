@@ -547,7 +547,19 @@ export class NpcController {
     if (Math.hypot(tank.x - mem.lastX, tank.y - mem.lastY) < 0.05) {
       mem.stuckTicks++;
       if (mem.stuckTicks > TICK_HZ * 3) {
-        const ang = Math.random() * Math.PI * 2;
+        // Sample 8 directions; prefer the one that reaches passable (non-water) terrain
+        let bestDir: number | null = null;
+        for (let i = 0; i < 8; i++) {
+          const ang = (i / 8) * Math.PI * 2;
+          const px = tank.x + Math.cos(ang) * 6;
+          const py = tank.y + Math.sin(ang) * 6;
+          const tile = world.tileAt(px, py) as Terrain;
+          if (TERRAIN[tile].tankSpeed > 0 && tile !== Terrain.DeepSea) {
+            bestDir = ang;
+            break;
+          }
+        }
+        const ang = bestDir ?? Math.random() * Math.PI * 2;
         mem.path = [[tank.x + Math.cos(ang) * 6, tank.y + Math.sin(ang) * 6]];
         mem.goalKey = 'wander';
         mem.pathAge = 0;
@@ -569,10 +581,18 @@ export class NpcController {
     const gy = goal.y + 0.5;
     const dist = Math.hypot(gx - tank.x, gy - tank.y);
     if (dist > 80) return false;
+    let consecutiveRiver = 0;
     for (let i = 1; i <= steps; i++) {
       const fx = tank.x + (gx - tank.x) * (i / steps);
       const fy = tank.y + (gy - tank.y) * (i / steps);
-      if (world.tileAt(fx, fy) === Terrain.DeepSea) return true;
+      const t = world.tileAt(fx, fy);
+      if (t === Terrain.DeepSea) return true;
+      if (t === Terrain.River) {
+        consecutiveRiver++;
+        if (consecutiveRiver >= 4) return true; // ~4+ tiles of river → boat is faster
+      } else {
+        consecutiveRiver = 0;
+      }
     }
     return false;
   }
@@ -909,6 +929,9 @@ function tileCost(world: World, x: number, y: number, allowDeepSea: boolean): nu
   }
   if (TERRAIN[t].tankSpeed === 0) return Infinity;
   let cost = 1 / TERRAIN[t].tankSpeed; // road 1, grass 1.33, river/swamp 4
+  // Extra aversion for river: it's passable but slow and often signals a
+  // water-crossing situation. Penalize so A* prefers land detours.
+  if (t === Terrain.River) cost *= 1.5; // effective cost ~6 instead of ~4
   // Deep-sea-edge penalty only when not on water (avoid coastal wedging for ground tanks)
   if (!allowDeepSea) {
     for (const [dx, dy] of NEIGHBORS) {
@@ -957,7 +980,7 @@ function findNearestWater(world: World, x: number, y: number): [number, number] 
   const tx = Math.floor(x);
   const ty = Math.floor(y);
   const maxR = Math.max(tx, ty, MAP_SIZE - tx, MAP_SIZE - ty);
-  for (let r = 1; r <= maxR; r += 2) {
+  for (let r = 1; r <= maxR; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) < r - 1) continue;
