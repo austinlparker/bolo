@@ -9,13 +9,13 @@ compatibility_flags = ["nodejs_compat"]
 enabled = true
 head_sampling_rate = 1
 
-# The game loop runs on setInterval inside the DO, so CPU accrues against a
-# single invocation context instead of resetting per-request. The default
-# 30s CPU budget (which applies even on Workers Paid unless overridden) caused
-# the DO to be hard-reset, dropping every live socket roughly hourly.
-# Per-tick work is kept cheap (see sim/npc.ts pathfinding); raising the budget
-# to the 5-minute maximum eliminates the resets entirely. Account is on Workers
-# Standard (paid), which is required for this setting (Free rejects with 100328).
+# The game loop runs on alarm-driven ticking inside the DO: each alarm() fire
+# is a separate invocation with its own CPU budget, so CPU can't accumulate
+# across ticks. The default 30s CPU budget (which applies even on Workers Paid
+# unless overridden) is sufficient per-tick, but raising it to the 5-minute
+# maximum provides headroom for expensive ticks (NPC repathing, persistence).
+# Account is on Workers Standard (paid), required for this setting (Free
+# rejects with 100328).
 [limits]
 cpu_ms = 300000
 

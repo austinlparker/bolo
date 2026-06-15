@@ -53,7 +53,15 @@ export class GameDO implements DurableObject {
   private npc = new NpcController();
   private phase: 'active' | 'intermission' = 'active';
   private nextWarAt: number | null = null;
-  private interval: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Alarm-driven tick loop: instead of setInterval (whose CPU time accumulates
+   * against the originating /ws invocation until the DO is hard-reset), each
+   * alarm() fire is a fresh invocation with its own CPU budget. The DO stays
+   * in memory between alarms (it holds active WebSockets), so in-memory state
+   * (World, SessionStore, etc.) survives across ticks.
+   */
+  private ticking = false;
+  private tickCounter = 0;
   private loaded: Promise<void>;
   private statsSink: StatsSink;
 
@@ -165,8 +173,32 @@ export class GameDO implements DurableObject {
 
   async alarm(): Promise<void> {
     await this.loaded;
-    // The alarm only matters for rolling an intermission into the next war
-    // when no sockets are connected to drive the tick loop.
+
+    // Game tick (alarm-driven loop): simulate one tick, then reschedule if
+    // sessions are still active. Each alarm fire is a fresh invocation with
+    // its own CPU budget — this is why we replaced setInterval, whose CPU
+    // accumulated against the originating /ws request until the DO was reset.
+    if (this.ticking) {
+      this.tickCounter++;
+      try {
+        this.tick(this.tickCounter);
+      } catch (err) {
+        console.error(`tick ${this.tickCounter} (war ${this.world?.warNumber}) threw`, err);
+      }
+      // Reschedule for the next tick. The DO stays in memory (WebSockets hold
+      // it alive), so state is preserved across alarm fires.
+      if (this.store.size > 0) {
+        this.state.storage.setAlarm(Date.now() + TICK_MS);
+      } else {
+        // Last session dropped between this alarm and now — stop ticking.
+        this.ticking = false;
+        this.statsSink.flush();
+      }
+      return;
+    }
+
+    // Intermission alarm: roll over to the next war when no sockets are
+    // connected to drive the tick loop.
     if (this.phase === 'intermission' && this.nextWarAt && Date.now() >= this.nextWarAt) {
       this.startNewWar();
       await this.persist();
@@ -344,27 +376,20 @@ export class GameDO implements DurableObject {
   // ---------- tick loop ----------
 
   private startTicking(): void {
-    if (this.interval !== null) return;
-    let tickCounter = 0;
-    this.interval = setInterval(() => {
-      tickCounter++;
-      // The whole world for every connected player lives in this one loop. A
-      // single uncaught throw (from crafted input or a corrupted entity) would
-      // otherwise re-fire every 100ms and freeze the world for everyone with no
-      // recovery — so isolate it: log and skip the bad tick, keep the loop alive.
-      try {
-        this.tick(tickCounter);
-      } catch (err) {
-        console.error(`tick ${tickCounter} (war ${this.world?.warNumber}) threw`, err);
-      }
-    }, TICK_MS);
+    if (this.ticking) return;
+    this.ticking = true;
+    this.tickCounter = 0;
+    // Kick off the alarm-driven tick loop. Each alarm() fire is a separate
+    // invocation with its own CPU budget, so CPU can't accumulate across
+    // ticks and trigger a DO reset.
+    this.state.storage.setAlarm(Date.now() + TICK_MS);
   }
 
   private stopTicking(): void {
-    if (this.interval !== null) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
+    if (!this.ticking) return;
+    this.ticking = false;
+    // No need to cancel the alarm: the next alarm() fire will see ticking=false
+    // and simply not reschedule. Flushing stats here ensures no data is lost.
     this.statsSink.flush();
   }
 
