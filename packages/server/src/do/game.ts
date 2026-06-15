@@ -406,6 +406,7 @@ export class GameDO implements DurableObject {
 
     // garrison AI
     if (counter % (TICK_HZ * 2) === 0) this.npc.balanceNpcs(world);
+    this.npc.preTick(world); // build team awareness before individual decisions
     for (const tank of world.tanks.values()) {
       if (tank.npc) world.setInput(tank.id, this.npc.think(world, tank));
     }
