@@ -49,7 +49,7 @@ HONEYCOMB_DATASET = "atbolo-sim"
 # (then paste the returned id below for production; preview_id for local dev)
 [[kv_namespaces]]
 binding = "SOCIAL_CACHE"
-id = "placeholder-replace-with-wrangler-kv-create-id"
+id = "b673bce241ea456a80db14110ea15c46"
 
 # Secrets (set with `wrangler secret put`):
 #   SESSION_SECRET - HMAC key for session tokens. Required in production.
