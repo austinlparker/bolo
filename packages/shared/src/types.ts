@@ -55,6 +55,8 @@ export interface Tank {
   client: string;
   /** server-only: tick of first damage in the current engagement (TTK telemetry) */
   engagedTick?: number;
+  /** server-only: tick of most recent damage — resets engagement if gap > TTK_RESET */
+  lastDamagedTick?: number;
 }
 
 export interface Shell {

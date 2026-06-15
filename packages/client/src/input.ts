@@ -74,6 +74,9 @@ export class Input {
       const turn = left && !right ? -1 : right && !left ? 1 : 0;
       const fire = this.held.has('Space');
       const msg: InputMsg = { t: 'input', accel, turn, fire };
+      // feed the prediction model so the client can dead-reckon your own
+      // tank without waiting for the server round-trip
+      this.gameState.myInput = { accel: msg.accel, turn: msg.turn, fire: msg.fire };
       const changed = msg.accel !== this.last.accel || msg.turn !== this.last.turn || msg.fire !== this.last.fire;
       if (changed || nudge !== undefined) {
         this.last = msg;

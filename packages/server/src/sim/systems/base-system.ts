@@ -110,6 +110,14 @@ export class BaseSystem {
           tank.caps++;
           this.host.basesChanged = true;
           events.push({ e: 'base_captured', baseId: base.id, by: tank.faction, handle: tank.handle });
+          this.host.stats.push({
+            name: 'base_capture',
+            base_id: base.id,
+            by_faction: tank.faction,
+            capturer_npc: tank.npc,
+            capturer_client: tank.client,
+            base_was_neutral: true,
+          });
         } else if (base.owner === tank.faction) {
           if (timer <= 0) {
             timer = BASE_REFUEL_INTERVAL / supplyRate;
@@ -120,7 +128,10 @@ export class BaseSystem {
               base.armorStock--;
               used = true;
               // patched back to full: the next damage starts a new engagement
-              if (tank.armor >= TANK_MAX_ARMOR) tank.engagedTick = undefined;
+              if (tank.armor >= TANK_MAX_ARMOR) {
+                tank.engagedTick = undefined;
+                tank.lastDamagedTick = undefined;
+              }
             }
             if (tank.shells < TANK_MAX_SHELLS && base.shellStock > 0) {
               tank.shells++;

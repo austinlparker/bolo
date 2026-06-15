@@ -92,10 +92,10 @@ export class Renderer {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.tiles.sync(state);
 
-    // camera follows your tank
+    // camera follows your tank — predicted for instant response, interpolated for others
     const meInterp = state.you ? state.tanks.get(state.you.tankId) : undefined;
     if (meInterp) {
-      const p = state.lerpTank(meInterp, now);
+      const p = state.predictedSelf(now);
       this.camX = p.x;
       this.camY = p.y;
     }
@@ -180,7 +180,7 @@ export class Renderer {
     // gun-range cursor: Bolo's targeting cursor — where your shells land,
     // at max range along the hull axis
     if (meInterp && meInterp.cur.alive) {
-      const p = state.lerpTank(meInterp, now);
+      const p = state.predictedSelf(now);
       const cross = sprites.images[meInterp.cur.faction === 'dawn' ? 'crosshairDawn' : 'crosshairDusk'];
       const range = meInterp.cur.gunRange ?? SHELL_RANGE;
       const [cxs, cys] = toScreen(p.x + Math.cos(p.dir) * range, p.y + Math.sin(p.dir) * range);
@@ -296,12 +296,13 @@ export class Renderer {
   ): void {
     const ctx = this.ctx;
     const t = it.cur;
-    const p = state.lerpTank(it, now);
+    const isMe = t.id === state.you?.tankId;
+    // own tank: use predicted position for instant response; others: interpolated
+    const p = isMe ? state.predictedSelf(now) : state.lerpTank(it, now);
     const [px, py] = toScreen(p.x, p.y);
     if (!onScreen(px, py)) return;
     const r = TANK_RADIUS * this.scale;
     const body = FACTION_COLORS[t.faction];
-    const isMe = t.id === state.you?.tankId;
 
     ctx.save();
     ctx.translate(px, py);
