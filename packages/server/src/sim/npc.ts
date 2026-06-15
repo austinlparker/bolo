@@ -54,8 +54,10 @@ const NPC_NAMES = [
 // --- Builder sub-goal state machine ---
 type NpcBuilderGoal =
   | { kind: 'none' }
-  | { kind: 'harvest'; targetTile: [number, number] }
-  | { kind: 'build_boat'; targetTile: [number, number] };
+  | { kind: 'goto_coast'; targetTile: [number, number]; finalGoal: [number, number] }
+  | { kind: 'harvest'; targetTile: [number, number]; finalGoal: [number, number] }
+  | { kind: 'build_boat'; targetTile: [number, number]; finalGoal: [number, number] }
+  | { kind: 'embark'; targetTile: [number, number]; finalGoal: [number, number] };
 
 interface AiMemory {
   path: [number, number][]; // tile-center waypoints from A*
@@ -371,7 +373,8 @@ export class NpcController {
         const err = world.builderOrder(tank.id, 'harvest', forest[0], forest[1]);
         if (!err) {
           mem.lastHarvestTick = world.tick;
-          mem.builderGoal = { kind: 'harvest', targetTile: forest };
+          // Note: don't set builderGoal here — this is tactical harvesting
+          // for materials, not part of the boat-building sub-goal.
         }
       }
     }
@@ -483,7 +486,7 @@ export class NpcController {
 
     // --- Boat building sub-goal state machine ---
     if (!tank.onBoat && mem.builderGoal.kind !== 'none') {
-      return this.handleBuilderGoal(world, tank, mem, goal);
+      return this.handleBuilderGoal(world, tank, mem);
     }
 
     return this.driveToGoal(world, tank, mem, goal, resupplying);
@@ -510,10 +513,25 @@ export class NpcController {
       mem.goalKey = goalKey;
 
       if (mem.path.length === 0 && goalD > 6) {
-        // Goal unreachable overland — check if we should try boat building
-        if (!tank.onBoat && !resupplying && this.shouldBuildBoat(world, tank, goal)) {
-          this.startBoatGoal(world, tank, mem);
-          return { accel: 0, turn: 0, fire: false }; // wait while builder dispatches
+        // Goal unreachable overland. Before building a new boat, check if
+        // there's an existing BoatTile within reach — reuse it instead.
+        if (!tank.onBoat && !resupplying) {
+          // Scan a generous radius for built boats (they can be anywhere on the coast)
+          const existingBoat = findNearestBoatTile(world, tank.x, tank.y, 60);
+          if (existingBoat) {
+            const boatD = Math.hypot(existingBoat[0] + 0.5 - tank.x, existingBoat[1] + 0.5 - tank.y);
+            mem.builderGoal = {
+              kind: 'embark',
+              targetTile: existingBoat,
+              finalGoal: [goal.x, goal.y],
+            };
+            return { accel: 0, turn: 0, fire: false };
+          }
+          // No existing boat — check if we should build one
+          if (this.shouldBuildBoat(world, tank, goal)) {
+            this.startBoatGoal(world, tank, mem, goal);
+            return { accel: 0, turn: 0, fire: false };
+          }
         }
         // Standard backoff
         mem.unreachableGoalKey = goalKey;
@@ -552,106 +570,172 @@ export class NpcController {
 
   // --- Check if the goal is across deep water ---
   private shouldBuildBoat(world: World, tank: Tank, goal: Base): boolean {
-    // First check: is there deep water on the straight-line path?
+    // Is there deep water on the straight-line path to the goal?
     const steps = 24;
     const gx = goal.x + 0.5;
     const gy = goal.y + 0.5;
     const dist = Math.hypot(gx - tank.x, gy - tank.y);
     if (dist > 80) return false; // too far to bother
-    let deepWaterOnPath = false;
     for (let i = 1; i <= steps; i++) {
       const fx = tank.x + (gx - tank.x) * (i / steps);
       const fy = tank.y + (gy - tank.y) * (i / steps);
-      const t = world.tileAt(fx, fy);
-      if (t === Terrain.DeepSea) { deepWaterOnPath = true; break; }
+      if (world.tileAt(fx, fy) === Terrain.DeepSea) return true;
     }
-    if (!deepWaterOnPath) return false;
-
-    // Deep water is on the path. Now verify there's actually a river tile
-    // nearby to build a boat on (otherwise boat-building is futile).
-    const riverTile = findRiverNearWater(world, tank.x, tank.y, BUILDER_MAX_RANGE);
-    return riverTile !== null;
+    return false;
   }
 
   // --- Start the boat-building sub-goal ---
-  private startBoatGoal(world: World, tank: Tank, mem: AiMemory): void {
-    if (tank.builder.phase !== 'in_tank') return;
-    if (tank.trees < COST_BOAT) {
-      // Need to harvest first
-      const forest = findNearestTerrain(world, tank.x, tank.y, Terrain.Forest, BUILDER_MAX_RANGE);
-      if (forest) {
-        const err = world.builderOrder(tank.id, 'harvest', forest[0], forest[1]);
-        if (!err) {
-          mem.builderGoal = { kind: 'harvest', targetTile: forest };
-        }
-      }
-    } else {
-      // Have enough trees — find a river tile near water to build the boat
-      const riverTile = findRiverNearWater(world, tank.x, tank.y, BUILDER_MAX_RANGE);
-      if (riverTile) {
-        const err = world.builderOrder(tank.id, 'boat', riverTile[0], riverTile[1]);
-        if (!err) {
-          mem.builderGoal = { kind: 'build_boat', targetTile: riverTile };
-        }
-      }
-    }
+  private startBoatGoal(world: World, tank: Tank, mem: AiMemory, goal: Base): void {
+    // Find the nearest water tile (river) on the entire map — this may be
+    // far away, so the NPC first navigates toward it, then builds the boat
+    // when it gets within BUILDER_MAX_RANGE.
+    const riverTile = findNearestWater(world, tank.x, tank.y);
+    if (!riverTile) return;
+    mem.builderGoal = {
+      kind: 'goto_coast',
+      targetTile: riverTile,
+      finalGoal: [goal.x, goal.y],
+    };
   }
 
-  // --- Handle the builder sub-goal state machine while builder is active ---
-  private handleBuilderGoal(world: World, tank: Tank, mem: AiMemory, goal: Base): TankInput {
+  // --- Handle the builder sub-goal state machine ---
+  private handleBuilderGoal(world: World, tank: Tank, mem: AiMemory): TankInput {
     const bg = mem.builderGoal;
+    if (bg.kind === 'none') return { accel: 0, turn: 0, fire: false };
 
-    // If the builder has returned to the tank, process the result
-    if (tank.builder.phase === 'in_tank') {
-      if (bg.kind === 'harvest') {
-        // Trees harvested. Do we have enough for a boat now?
-        if (tank.trees >= COST_BOAT) {
-          const riverTile = findRiverNearWater(world, tank.x, tank.y, BUILDER_MAX_RANGE);
-          if (riverTile) {
-            const err = world.builderOrder(tank.id, 'boat', riverTile[0], riverTile[1]);
-            if (!err) {
-              mem.builderGoal = { kind: 'build_boat', targetTile: riverTile };
+    // Once on a boat, the sub-goal is complete — let normal A* take over
+    if (tank.onBoat) {
+      mem.builderGoal = { kind: 'none' };
+      return { accel: 0, turn: 0, fire: false };
+    }
+
+    switch (bg.kind) {
+      case 'goto_coast': {
+        // While heading to the coast, check for an existing boat we could
+        // grab instead of building one from scratch.
+        const existingBoat = findNearestBoatTile(world, tank.x, tank.y, 15);
+        if (existingBoat) {
+          mem.builderGoal = { kind: 'embark', targetTile: existingBoat, finalGoal: bg.finalGoal };
+          return steerAndShoot(world, tank, existingBoat[0] + 0.5, existingBoat[1] + 0.5, true, false);
+        }
+        // Navigate toward the nearest water tile. Use A* for navigation
+        // (the NPC is on land, so this is a normal overland path).
+        const [tx, ty] = bg.targetTile;
+        const d = Math.hypot(tx + 0.5 - tank.x, ty + 0.5 - tank.y);
+        if (d <= BUILDER_MAX_RANGE) {
+          // Close enough to start building. Do we have enough trees?
+          if (tank.trees < COST_BOAT) {
+            // Need to harvest first — look for a forest within range
+            const forest = findNearestTerrain(world, tank.x, tank.y, Terrain.Forest, BUILDER_MAX_RANGE);
+            if (forest) {
+              const err = world.builderOrder(tank.id, 'harvest', forest[0], forest[1]);
+              if (!err) {
+                mem.builderGoal = { kind: 'harvest', targetTile: forest, finalGoal: bg.finalGoal };
+              } else {
+                // Can't harvest — try building with what we have (might have partial trees)
+                mem.builderGoal = { kind: 'build_boat', targetTile: [tx, ty], finalGoal: bg.finalGoal };
+              }
             } else {
-              mem.builderGoal = { kind: 'none' }; // give up
+              // No forest — try to build anyway or give up
+              if (tank.trees >= COST_BOAT) {
+                this.tryBoatOrder(world, tank, mem, [tx, ty], bg.finalGoal);
+              } else {
+                mem.builderGoal = { kind: 'none' };
+              }
             }
           } else {
-            mem.builderGoal = { kind: 'none' };
+            // Have enough trees — build the boat
+            this.tryBoatOrder(world, tank, mem, [tx, ty], bg.finalGoal);
           }
-        } else {
-          // Need more trees — harvest again if available
-          const forest = findNearestTerrain(world, tank.x, tank.y, Terrain.Forest, BUILDER_MAX_RANGE);
-          if (forest) {
-            const err = world.builderOrder(tank.id, 'harvest', forest[0], forest[1]);
-            if (!err) {
-              mem.builderGoal = { kind: 'harvest', targetTile: forest };
+          return { accel: 0, turn: 0, fire: false };
+        }
+        // Not close enough yet — drive toward the coast tile.
+        // Use simple steering since A* may not find a path to a water tile.
+        return steerAndShoot(world, tank, tx + 0.5, ty + 0.5, true, false);
+      }
+
+      case 'harvest': {
+        if (tank.builder.phase === 'in_tank') {
+          // Builder returned. Do we have enough trees now?
+          if (tank.trees >= COST_BOAT) {
+            // Find the nearest water tile from our current position
+            const riverTile = findNearestWater(world, tank.x, tank.y);
+            if (riverTile) {
+              const rd = Math.hypot(riverTile[0] + 0.5 - tank.x, riverTile[1] + 0.5 - tank.y);
+              if (rd <= BUILDER_MAX_RANGE) {
+                this.tryBoatOrder(world, tank, mem, riverTile, bg.finalGoal);
+              } else {
+                // Need to move closer to water first
+                mem.builderGoal = { kind: 'goto_coast', targetTile: riverTile, finalGoal: bg.finalGoal };
+              }
             } else {
               mem.builderGoal = { kind: 'none' };
             }
           } else {
+            // Need more trees — harvest again
+            const forest = findNearestTerrain(world, tank.x, tank.y, Terrain.Forest, BUILDER_MAX_RANGE);
+            if (forest) {
+              const err = world.builderOrder(tank.id, 'harvest', forest[0], forest[1]);
+              if (!err) {
+                mem.builderGoal = { kind: 'harvest', targetTile: forest, finalGoal: bg.finalGoal };
+              } else {
+                mem.builderGoal = { kind: 'none' };
+              }
+            } else {
+              // No forest available — give up
+              mem.builderGoal = { kind: 'none' };
+            }
+          }
+        }
+        // Builder is out — wait
+        return { accel: 0, turn: 0, fire: false };
+      }
+
+      case 'build_boat': {
+        if (tank.builder.phase === 'in_tank') {
+          // Builder returned — check if the boat was built
+          const [bx, by] = bg.targetTile;
+          const t = world.terrain[idx(bx, by)] as Terrain;
+          if (t === Terrain.BoatTile) {
+            // Boat is ready — navigate to it to embark
+            mem.builderGoal = { kind: 'embark', targetTile: [bx, by], finalGoal: bg.finalGoal };
+          } else {
+            // Boat wasn't built (terrain changed, etc.) — give up
             mem.builderGoal = { kind: 'none' };
           }
         }
+        // Builder is out — wait
         return { accel: 0, turn: 0, fire: false };
       }
 
-      if (bg.kind === 'build_boat') {
-        // Boat was built — check if BoatTile exists at the target
+      case 'embark': {
+        // Navigate to the boat tile. Once onBoat becomes true, the sub-goal
+        // completes (checked at the top of this method) and normal A* with
+        // allowDeepSea takes over.
         const [bx, by] = bg.targetTile;
-        const t = world.terrain[idx(bx, by)] as Terrain;
-        if (t === Terrain.BoatTile) {
-          // Navigate to the boat tile to embark
-          mem.builderGoal = { kind: 'none' };
-          // Drive toward the boat tile
-          return steerAndShoot(world, tank, bx + 0.5, by + 0.5, true, false);
+        const d = Math.hypot(bx + 0.5 - tank.x, by + 0.5 - tank.y);
+        if (d < 0.8) {
+          // We're on the boat tile but haven't embarked — the tile transition
+          // system handles embarkation when the tank moves onto a BoatTile.
+          // Just keep driving forward.
         }
-        // Boat wasn't built (something went wrong) — give up
-        mem.builderGoal = { kind: 'none' };
-        return { accel: 0, turn: 0, fire: false };
+        return steerAndShoot(world, tank, bx + 0.5, by + 0.5, true, false);
       }
     }
+  }
 
-    // Builder is out — wait (don't issue movement commands)
-    return { accel: 0, turn: 0, fire: false };
+  /** Dispatch a boat build order, transitioning to build_boat or giving up. */
+  private tryBoatOrder(
+    world: World, tank: Tank, mem: AiMemory,
+    riverTile: [number, number], finalGoal: [number, number],
+  ): void {
+    if (tank.builder.phase !== 'in_tank') return;
+    const err = world.builderOrder(tank.id, 'boat', riverTile[0], riverTile[1]);
+    if (!err) {
+      mem.builderGoal = { kind: 'build_boat', targetTile: riverTile, finalGoal };
+    } else {
+      mem.builderGoal = { kind: 'none' };
+    }
   }
 
   // --- Find a sieged friendly base to defend ---
@@ -799,6 +883,7 @@ function steerAndShoot(
   aimError = 0,
 ): TankInput {
   const want = Math.atan2(ty - tank.y, tx - tank.x) + aimError;
+  const trueDelta = angleDelta(tank.dir, Math.atan2(ty - tank.y, tx - tank.x));
   const delta = angleDelta(tank.dir, want);
 
   // local avoidance: probe ahead, veer away from walls, open sea, and hostile mines
@@ -828,7 +913,8 @@ function steerAndShoot(
     turn = (probe(tank.dir + 0.7) || mineProbe(tank.dir + 0.7)) ? -1 : 1;
   }
 
-  const facing = Math.abs(delta) < 0.1;
+  // facing uses the true (unjittered) angle so aim jitter doesn't suppress fire
+  const facing = Math.abs(trueDelta) < 0.1;
   const hardTurn = Math.abs(delta) > 0.9 && !blocked;
   return {
     accel: (advance || blocked) && !hardTurn ? 1 : 0,
@@ -937,6 +1023,58 @@ function findRiverNearWater(
     }
   }
   return best ?? fallback;
+}
+
+/**
+ * Find the nearest water tile (River or BoatTile) on the entire map,
+ * searching outward from (x, y). Used to find the coastline when a tank
+ * needs to build or use a boat but is deep inland.
+ */
+function findNearestWater(world: World, x: number, y: number): [number, number] | null {
+  const tx = Math.floor(x);
+  const ty = Math.floor(y);
+  // Search outward in expanding rings up to half the map.
+  // This is expensive in the worst case but only runs when A* already
+  // failed (so it's at most once per 15s backoff per NPC).
+  const maxR = Math.max(tx, ty, MAP_SIZE - tx, MAP_SIZE - ty);
+  for (let r = 1; r <= maxR; r += 2) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < r - 1) continue; // only ring boundary
+        const nx = tx + dx;
+        const ny = ty + dy;
+        if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
+        const t = world.terrain[idx(nx, ny)] as Terrain;
+        if (t === Terrain.River || t === Terrain.BoatTile) {
+          return [nx, ny];
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Find the nearest built BoatTile on the map within a reasonable range.
+ * Prefers boats that are closer and accessible by land.
+ */
+function findNearestBoatTile(world: World, x: number, y: number, maxRange: number): [number, number] | null {
+  const tx = Math.floor(x);
+  const ty = Math.floor(y);
+  for (let r = 1; r <= maxRange; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const nx = tx + dx;
+        const ny = ty + dy;
+        if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
+        if ((world.terrain[idx(nx, ny)] as Terrain) === Terrain.BoatTile) {
+          return [nx, ny];
+        }
+      }
+    }
+  }
+  return null;
 }
 
 /** Find the nearest friendly base to a tank. */
