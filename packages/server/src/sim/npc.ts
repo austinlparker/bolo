@@ -1,8 +1,19 @@
 /**
- * Garrison AI: simple server-side tanks that keep each faction populated so
- * the persistent war grinds on even when no humans are online. Deliberately
+ * Garrison AI: server-side tanks that keep each faction populated so the
+ * persistent war grinds on even when no humans are online. Deliberately
  * beatable — external bots connecting over the public protocol should be
  * able to outplay them.
+ *
+ * Capabilities:
+ *  - Weighted A* pathfinding with boat-aware water traversal
+ *  - Duel targeting with reaction delay + aim jitter
+ *  - Threat assessment (retreat when outnumbered and fragile)
+ *  - Shell dodging (perpendicular evasion)
+ *  - Mine avoidance (hostile mines steered around)
+ *  - Team awareness (focus fire, base defense, goal spreading)
+ *  - Boat building (harvest → build boat → embark → cross water)
+ *  - Tactical builder usage (roads on slow terrain, walls around bases,
+ *    mines on approach lanes, pillbox placement, proactive harvesting)
  *
  * Navigation uses weighted A* over the tile grid, recomputed only when a
  * path is consumed or its goal changes, with local steering between
@@ -11,7 +22,9 @@
 import {
   type Faction,
   FACTIONS,
+  idx,
   MAP_SIZE,
+  MineState,
   NPC_MIN_PER_FACTION,
   NPC_MAX_TOTAL,
   PILL_RANGE,
@@ -20,6 +33,16 @@ import {
   TERRAIN,
   TICK_HZ,
 } from '@bolo/shared';
+import {
+  BASE_REFUEL_RADIUS,
+  BOAT_SPEED,
+  BUILDER_MAX_RANGE,
+  COST_BOAT,
+  COST_ROAD,
+  COST_WALL,
+  TANK_START_ARMOR,
+  TREES_PER_FOREST_TILE,
+} from '@bolo/shared';
 import type { Base, Pillbox, Tank } from '@bolo/shared';
 import type { TankInput, World } from './world';
 
@@ -27,6 +50,12 @@ const NPC_NAMES = [
   'patrol', 'lancer', 'bastion', 'vanguard', 'sentry', 'warden',
   'breaker', 'anvil', 'hammer', 'picket', 'outrider', 'sapper',
 ];
+
+// --- Builder sub-goal state machine ---
+type NpcBuilderGoal =
+  | { kind: 'none' }
+  | { kind: 'harvest'; targetTile: [number, number] }
+  | { kind: 'build_boat'; targetTile: [number, number] };
 
 interface AiMemory {
   path: [number, number][]; // tile-center waypoints from A*
@@ -44,6 +73,30 @@ interface AiMemory {
   /** a goalKey that A* couldn't reach overland, skipped until unreachableUntil */
   unreachableGoalKey: string;
   unreachableUntil: number;
+  // --- New fields ---
+  /** builder sub-goal: harvesting trees or building a boat for water crossing */
+  builderGoal: NpcBuilderGoal;
+  /** tick stamp of last road build (cooldown) */
+  lastRoadTick: number;
+  /** tick stamp of last wall build (cooldown) */
+  lastWallTick: number;
+  /** tick stamp of last mine lay (cooldown) */
+  lastMineTick: number;
+  /** tick stamp of last forest harvest dispatch */
+  lastHarvestTick: number;
+  /** remaining dodge ticks; when > 0, override steering to dodge shells */
+  dodgeTicks: number;
+  dodgeDir: number;
+}
+
+// --- Team awareness context ---
+interface TeamAwareness {
+  /** enemy tank ids currently being engaged by a friendly NPC → count */
+  engagedEnemies: Map<number, number>;
+  /** friendly base ids under siege (enemy within BASE_REFUEL_RADIUS * 5) */
+  siegedBases: Set<number>;
+  /** friendly NPC positions for goal spreading */
+  friendlyPositions: Map<Faction, { x: number; y: number; goalKey: string }[]>;
 }
 
 // Humanizers: garrison bots aimed with perfect server-side information and
@@ -57,40 +110,40 @@ const NPC_AIM_SPREAD = 0.12; // radians; ~7° max error, resampled at 2Hz
 // impossible goal every couple of seconds.
 const NPC_UNREACHABLE_BACKOFF = TICK_HZ * 30;
 
-// A* scratch buffers, allocated once. findPath used to allocate ~768KB of
-// typed arrays per call; with a dozen garrisons repathing, the allocation +
-// zeroing churn was real CPU inside the DO's single budget (see the
-// [limits] note in wrangler.toml). `stamp` marks which search generation
-// initialized a cell, so the arrays never need clearing between calls.
+// A* scratch buffers, allocated once.
 const N_TILES = MAP_SIZE * MAP_SIZE;
-/**
- * Search budget: an unreachable goal would otherwise exhaust all 65k tiles
- * on every repath, which is exactly the pathological case that blew the DO's
- * CPU limit. A capped search reads as "unreachable" to the caller, which
- * falls back to wandering.
- */
 const MAX_EXPANSIONS = 12000;
-/** Weighted A* (h x 1.2): slightly suboptimal routes, far fewer expansions. */
 const HEURISTIC_WEIGHT = 1.2;
 
 const NEIGHBORS = [
   [1, 0], [-1, 0], [0, 1], [0, -1],
 ] as const;
 
+// Tactical builder cooldowns (ticks)
+const ROAD_COOLDOWN = TICK_HZ * 4; // 4 seconds between road builds per NPC
+const WALL_COOLDOWN = TICK_HZ * 8;
+const MINE_COOLDOWN = TICK_HZ * 10;
+const HARVEST_COOLDOWN = TICK_HZ * 5;
+
+// --- Terrain helpers ---
+const SLOW_TERRAINS = new Set<number>([
+  Terrain.Swamp, Terrain.Crater, Terrain.Rubble, Terrain.ShotBuilding,
+]);
+
 /**
  * Encapsulates all per-instance NPC state: the name counter, per-tank AI
- * memories, and A* scratch buffers. One instance per World (GameDO); the
- * module-level facade functions below delegate to a lazy singleton for the
- * single-World case.
+ * memories, and A* scratch buffers. One instance per World (GameDO).
  */
 export class NpcController {
   private npcCounter = 0;
   private memories = new Map<number, AiMemory>();
-  // A* scratch (allocated once per controller instance)
+  // A* scratch
   private gScore = new Float64Array(N_TILES);
   private cameFrom = new Int32Array(N_TILES);
   private stamp = new Int32Array(N_TILES);
   private generation = 0;
+  // Team awareness, rebuilt each tick by preTick()
+  private team: TeamAwareness | null = null;
 
   /** Top up factions to the minimum population; cull extras when humans show up. */
   balanceNpcs(world: World): void {
@@ -121,12 +174,85 @@ export class NpcController {
     }
   }
 
+  /**
+   * Build per-tick team awareness context. Called once before the think()
+   * loop so individual NPC decisions can reference shared team state
+   * (engaged enemies, sieged bases, friendly positions for spreading).
+   */
+  preTick(world: World): void {
+    const engaged = new Map<number, number>();
+    const sieged = new Set<number>();
+    const friendlyPos: Map<Faction, { x: number; y: number; goalKey: string }[]> = new Map([
+      ['dawn', []], ['dusk', []],
+    ]);
+
+    for (const t of world.tanks.values()) {
+      if (!t.alive) continue;
+      // Record friendly position + current goal for spreading
+      if (t.npc) {
+        const mem = this.memories.get(t.id);
+        friendlyPos.get(t.faction)!.push({
+          x: t.x, y: t.y, goalKey: mem?.goalKey ?? '',
+        });
+      }
+    }
+
+    // Detect sieged bases: enemy near a friendly base
+    for (const b of world.bases) {
+      if (b.owner === 'neutral') continue;
+      const faction = b.owner as Faction;
+      for (const t of world.tanks.values()) {
+        if (!t.alive || t.faction === faction) continue;
+        const d = Math.hypot(t.x - (b.x + 0.5), t.y - (b.y + 0.5));
+        if (d < BASE_REFUEL_RADIUS * 8) { // ~6 tiles — "near the base"
+          sieged.add(b.id);
+          break;
+        }
+      }
+    }
+
+    // Engaged enemies: mark targets of friendly NPCs from the previous tick's memory
+    for (const [tid, mem] of this.memories) {
+      const t = world.tanks.get(tid);
+      if (!t || !t.alive || !t.npc) continue;
+      if (mem.targetId > 0) {
+        engaged.set(mem.targetId, (engaged.get(mem.targetId) ?? 0) + 1);
+      }
+    }
+
+    this.team = {
+      engagedEnemies: engaged,
+      siegedBases: sieged,
+      friendlyPositions: friendlyPos,
+    };
+  }
+
   think(world: World, tank: Tank): TankInput {
     if (!tank.alive) return { accel: 0, turn: 0, fire: false };
     const mem = this.getMemory(tank);
 
-    // out of ammo (or badly mauled) means disengage and run for resupply —
-    // duelling with an empty rack is how garrisons used to deadlock the war
+    // --- Shell dodging (highest priority below "don't be dead") ---
+    const dodge = this.checkShellThreat(world, tank);
+    if (dodge) {
+      mem.dodgeTicks = 3; // dodge for ~0.3 seconds
+      mem.dodgeDir = dodge;
+    }
+    if (mem.dodgeTicks > 0) {
+      mem.dodgeTicks--;
+      return {
+        accel: 1,
+        turn: mem.dodgeDir,
+        fire: false,
+      };
+    }
+
+    // --- Threat assessment: retreat when badly outnumbered and fragile ---
+    const retreating = this.checkThreatRetreat(world, tank);
+    if (retreating) {
+      // Act like we need supply: skip combat, head for a friendly base
+      return this.navigateStrategic(world, tank, mem, true);
+    }
+
     const needSupply = tank.shells < 5 || tank.armor < 15;
 
     if (!needSupply) {
@@ -137,12 +263,19 @@ export class NpcController {
         if (!other.alive || other.faction === tank.faction) continue;
         if (world.tileAt(other.x, other.y) === Terrain.Forest) continue; // can't see into trees
         const d = Math.hypot(other.x - tank.x, other.y - tank.y);
-        if (d < enemyD) {
-          enemyD = d;
+        // Focus fire bias: prefer enemies a teammate is already engaging
+        let effectiveD = d;
+        if (this.team?.engagedEnemies.has(other.id)) {
+          effectiveD -= 5; // bias toward focus-fired targets
+        }
+        if (effectiveD < enemyD) {
+          enemyD = effectiveD;
           enemy = other;
         }
       }
       if (enemy) {
+        // Use the actual distance for combat, not the biased effective distance
+        const realD = Math.hypot(enemy.x - tank.x, enemy.y - tank.y);
         if (mem.targetId !== enemy.id) {
           mem.targetId = enemy.id;
           mem.targetSince = world.tick;
@@ -153,7 +286,7 @@ export class NpcController {
           mem.aimJitter = (Math.random() * 2 - 1) * NPC_AIM_SPREAD;
         }
         return steerAndShoot(
-          world, tank, enemy.x, enemy.y, enemyD > 3, acquired && tank.shells > 0, mem.aimJitter,
+          world, tank, enemy.x, enemy.y, realD > 3, acquired && tank.shells > 0, mem.aimJitter,
         );
       }
       mem.targetId = -1;
@@ -174,20 +307,157 @@ export class NpcController {
       }
     }
 
-    // 3) strategic goal: resupply when low, otherwise march on a base we don't own
-    let goal: Base | null = null;
-    let bestScore = Infinity;
+    // 3) tactical builder usage (non-combat): proactive harvest + road/wall/mine/pill
+    if (!needSupply || tank.trees < 5) {
+      this.tryTacticalBuilder(world, tank, mem, needSupply);
+    }
+
+    // 4) strategic goal: resupply when low, otherwise march on a base
+    return this.navigateStrategic(world, tank, mem, needSupply);
+  }
+
+  // --- Shell dodging ---
+  private checkShellThreat(world: World, tank: Tank): number {
+    let dodgeDir = 0;
+    for (const s of world.shells) {
+      if (s.faction === tank.faction) continue; // friendly fire isn't a threat
+      // Is this shell heading roughly toward us?
+      const toUs = Math.atan2(tank.y - s.y, tank.x - s.x);
+      const headingDiff = Math.abs(angleDelta(s.dir, toUs));
+      if (headingDiff > 0.3) continue; // not aimed at us
+      const d = Math.hypot(s.x - tank.x, s.y - tank.y);
+      if (d > 6) continue; // too far to worry
+      // Dodge perpendicular to the shell's direction
+      const ourOffset = angleDelta(s.dir, Math.atan2(tank.y - s.y, tank.x - s.x));
+      dodgeDir = ourOffset > 0 ? 1 : -1; // turn away from the shell line
+    }
+    return dodgeDir;
+  }
+
+  // --- Threat assessment: returns true if we should retreat ---
+  private checkThreatRetreat(world: World, tank: Tank): boolean {
+    let nearbyFriendlies = 0;
+    let nearbyEnemies = 0;
+    for (const other of world.tanks.values()) {
+      if (!other.alive || other.id === tank.id) continue;
+      const d = Math.hypot(other.x - tank.x, other.y - tank.y);
+      if (d > SHELL_RANGE) continue;
+      if (other.faction === tank.faction) nearbyFriendlies++;
+      else nearbyEnemies++;
+    }
+    const outnumbered = nearbyEnemies > nearbyFriendlies + 1;
+    const fragile = tank.armor < TANK_START_ARMOR * 0.5 || tank.shells < 5;
+    return outnumbered && fragile;
+  }
+
+  // --- Tactical builder usage ---
+  private tryTacticalBuilder(world: World, tank: Tank, mem: AiMemory, needSupply: boolean): void {
+    if (tank.builder.phase !== 'in_tank') return; // builder is busy
+
+    // Proactive forest harvesting: keep trees topped up for roads/walls/boats
+    if (tank.trees < 5 && world.tick - mem.lastHarvestTick >= HARVEST_COOLDOWN) {
+      const forest = findNearestTerrain(world, tank.x, tank.y, Terrain.Forest, BUILDER_MAX_RANGE);
+      if (forest) {
+        const err = world.builderOrder(tank.id, 'harvest', forest[0], forest[1]);
+        if (!err) {
+          mem.lastHarvestTick = world.tick;
+          mem.builderGoal = { kind: 'harvest', targetTile: forest };
+        }
+      }
+    }
+
+    // When not in urgent need of supply (not rushing back), do base fortification
+    if (!needSupply && tank.trees >= 5) {
+      // Road building on slow terrain the NPC is driving over
+      if (world.tick - mem.lastRoadTick >= ROAD_COOLDOWN && tank.trees >= COST_ROAD) {
+        const myTileX = Math.floor(tank.x);
+        const myTileY = Math.floor(tank.y);
+        const t = world.terrain[idx(myTileX, myTileY)] as Terrain;
+        if (SLOW_TERRAINS.has(t)) {
+          const err = world.builderOrder(tank.id, 'road', myTileX, myTileY);
+          if (!err) mem.lastRoadTick = world.tick;
+        }
+      }
+
+      // Defensive walls near friendly bases
+      if (world.tick - mem.lastWallTick >= WALL_COOLDOWN && tank.trees >= COST_WALL + 2) {
+        const friendlyBase = findNearestFriendlyBase(world, tank);
+        if (friendlyBase) {
+          const d = Math.hypot(friendlyBase.x + 0.5 - tank.x, friendlyBase.y + 0.5 - tank.y);
+          if (d < 4) {
+            // Try to wall an adjacent tile to the base
+            for (const [dx, dy] of NEIGHBORS) {
+              const wx = friendlyBase.x + dx;
+              const wy = friendlyBase.y + dy;
+              if (wx < 0 || wy < 0 || wx >= MAP_SIZE || wy >= MAP_SIZE) continue;
+              const wt = world.terrain[idx(wx, wy)] as Terrain;
+              if (canBuildOn(wt)) {
+                const err = world.builderOrder(tank.id, 'wall', wx, wy);
+                if (!err) {
+                  mem.lastWallTick = world.tick;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Defensive mine laying near friendly bases
+      if (world.tick - mem.lastMineTick >= MINE_COOLDOWN && tank.mines > 0) {
+        const friendlyBase = findNearestFriendlyBase(world, tank);
+        if (friendlyBase) {
+          const d = Math.hypot(friendlyBase.x + 0.5 - tank.x, friendlyBase.y + 0.5 - tank.y);
+          if (d < 5) {
+            // Lay a mine on the tile we're on, if it's safe
+            const mx = Math.floor(tank.x);
+            const my = Math.floor(tank.y);
+            if (mx >= 0 && my >= 0 && mx < MAP_SIZE && my < MAP_SIZE) {
+              const mt = world.terrain[idx(mx, my)] as Terrain;
+              if (canBuildOn(mt) && world.mines[idx(mx, my)] === MineState.None) {
+                const err = world.builderOrder(tank.id, 'mine', mx, my);
+                if (!err) mem.lastMineTick = world.tick;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // --- Strategic navigation (base selection + A* pathfinding + boat building) ---
+  private navigateStrategic(world: World, tank: Tank, mem: AiMemory, needSupply: boolean): TankInput {
     const haveHomeBase = world.bases.some((b) => b.owner === tank.faction);
     const resupplying = needSupply && haveHomeBase;
+
+    // --- Base defense: redirect to a sieged friendly base ---
+    if (this.team && !resupplying) {
+      const defended = this.findSiegedBase(world, tank);
+      if (defended) {
+        return this.driveToBase(world, tank, mem, defended);
+      }
+    }
+
+    // --- Select a strategic goal base ---
+    let goal: Base | null = null;
+    let bestScore = Infinity;
     for (const b of world.bases) {
       const isMine = b.owner === tank.faction;
       if (resupplying ? !isMine : isMine) continue;
-      // skip an attack goal we recently failed to reach overland (see backoff below)
       if (!resupplying && world.tick < mem.unreachableUntil && mem.unreachableGoalKey === `base:${b.id}:${b.owner}`) {
         continue;
       }
       const d = Math.hypot(b.x + 0.5 - tank.x, b.y + 0.5 - tank.y);
-      const bias = !resupplying && b.owner !== 'neutral' ? 40 : 0; // prefer free real estate
+      let bias = !resupplying && b.owner !== 'neutral' ? 40 : 0; // prefer free real estate
+      // Goal spreading: penalize goals other friendlies are already heading toward
+      const goalKey = `base:${b.id}:${b.owner}`;
+      const teammates = this.team?.friendlyPositions.get(tank.faction) ?? [];
+      for (const f of teammates) {
+        if (f.goalKey === goalKey) {
+          const fd = Math.hypot(f.x - (b.x + 0.5), f.y - (b.y + 0.5));
+          if (fd < d) bias += 20; // a teammate is closer to this base
+        }
+      }
       if (d + bias < bestScore) {
         bestScore = d + bias;
         goal = b;
@@ -195,49 +465,60 @@ export class NpcController {
     }
     if (!goal) return { accel: 0, turn: 0, fire: false };
 
-    // bombard an enemy base's fortifications until it falls neutral, then
-    // drive onto the pad to claim it
+    // bombard an enemy base's fortifications until it falls neutral
     const goalD = Math.hypot(goal.x + 0.5 - tank.x, goal.y + 0.5 - tank.y);
     if (!resupplying && goal.owner !== 'neutral' && goal.hp > 0 && goalD < SHELL_RANGE * 0.9) {
       return steerAndShoot(world, tank, goal.x + 0.5, goal.y + 0.5, goalD > 4, tank.shells > 0);
     }
 
-    // navigate via A* waypoints. Repath only when the goal changes or the
-    // path is consumed, plus a slow per-tank-staggered staleness refresh so
-    // terrain edits eventually reroute everyone. (The old fixed 4s cadence
-    // meant every garrison repathing on the same ticks — synchronized
-    // full-map searches were the main driver of the DO's CPU blowouts.)
+    // --- Boat building sub-goal state machine ---
+    if (!tank.onBoat && mem.builderGoal.kind !== 'none') {
+      return this.handleBuilderGoal(world, tank, mem, goal);
+    }
+
+    return this.driveToGoal(world, tank, mem, goal, resupplying);
+  }
+
+  // --- Drive toward a specific base (for base defense) ---
+  private driveToBase(world: World, tank: Tank, mem: AiMemory, base: Base): TankInput {
+    return this.driveToGoal(world, tank, mem, base, false);
+  }
+
+  // --- Core A* navigation toward a goal base ---
+  private driveToGoal(world: World, tank: Tank, mem: AiMemory, goal: Base, resupplying: boolean): TankInput {
     const goalKey = `base:${goal.id}:${goal.owner}`;
     mem.pathAge++;
     const stale = mem.pathAge > TICK_HZ * (8 + (tank.id % 5));
-    if (mem.goalKey !== goalKey || stale || (mem.path.length === 0 && goalD > 1.5)) {
-      mem.path = this.findPath(world, tank.x, tank.y, goal.x + 0.5, goal.y + 0.5);
+    if (mem.goalKey !== goalKey || stale || (mem.path.length === 0)) {
+      mem.path = this.findPath(world, tank.x, tank.y, goal.x + 0.5, goal.y + 0.5, tank.onBoat);
       mem.pathAge = 0;
       mem.goalKey = goalKey;
+
+      const goalD = Math.hypot(goal.x + 0.5 - tank.x, goal.y + 0.5 - tank.y);
+
       if (mem.path.length === 0 && goalD > 6) {
-        // goal unreachable overland from here (cut off by sea/walls): back it
-        // off so we stop re-searching it every recompute, and wander toward a
-        // random nearby spot meanwhile
+        // Goal unreachable overland — check if we should try boat building
+        if (!tank.onBoat && !resupplying && this.shouldBuildBoat(world, tank, goal)) {
+          this.startBoatGoal(world, tank, mem);
+          return { accel: 0, turn: 0, fire: false }; // wait while builder dispatches
+        }
+        // Standard backoff
         mem.unreachableGoalKey = goalKey;
         mem.unreachableUntil = world.tick + NPC_UNREACHABLE_BACKOFF;
         const ang = Math.random() * Math.PI * 2;
         mem.path = [[tank.x + Math.cos(ang) * 8, tank.y + Math.sin(ang) * 8]];
       } else if (mem.path.length === 0 && goalD > 1.5) {
-        // nearby but no route found: drive straight at it and let local
-        // steering cope, instead of re-searching the map every tick
         mem.path = [[goal.x + 0.5, goal.y + 0.5]];
       }
     }
-    // reach radius must exceed the tank's full-speed turn radius (~0.94 tiles,
-    // v/ω = 4.0/3.2 at top speed) or tanks orbit a waypoint forever
+
     let [wx, wy] = mem.path[0] ?? [goal.x + 0.5, goal.y + 0.5];
     while (mem.path.length > 0 && Math.hypot(wx - tank.x, wy - tank.y) < 1.5) {
       mem.path.shift();
       [wx, wy] = mem.path[0] ?? [goal.x + 0.5, goal.y + 0.5];
     }
 
-    // unstick: wedged against geometry for 3s -> wander somewhere random,
-    // then replan from the new position
+    // unstick
     if (Math.hypot(tank.x - mem.lastX, tank.y - mem.lastY) < 0.05) {
       mem.stuckTicks++;
       if (mem.stuckTicks > TICK_HZ * 3) {
@@ -256,6 +537,121 @@ export class NpcController {
     return steerAndShoot(world, tank, wx, wy, true, false);
   }
 
+  // --- Check if the goal is across deep water ---
+  private shouldBuildBoat(world: World, tank: Tank, goal: Base): boolean {
+    // Scan the straight-line path for deep-sea tiles
+    const steps = 20;
+    const gx = goal.x + 0.5;
+    const gy = goal.y + 0.5;
+    const dist = Math.hypot(gx - tank.x, gy - tank.y);
+    if (dist > 60) return false; // too far to bother
+    for (let i = 1; i <= steps; i++) {
+      const fx = tank.x + (gx - tank.x) * (i / steps);
+      const fy = tank.y + (gy - tank.y) * (i / steps);
+      const t = world.tileAt(fx, fy);
+      if (t === Terrain.DeepSea) return true;
+    }
+    return false;
+  }
+
+  // --- Start the boat-building sub-goal ---
+  private startBoatGoal(world: World, tank: Tank, mem: AiMemory): void {
+    if (tank.builder.phase !== 'in_tank') return;
+    if (tank.trees < COST_BOAT) {
+      // Need to harvest first
+      const forest = findNearestTerrain(world, tank.x, tank.y, Terrain.Forest, BUILDER_MAX_RANGE);
+      if (forest) {
+        const err = world.builderOrder(tank.id, 'harvest', forest[0], forest[1]);
+        if (!err) {
+          mem.builderGoal = { kind: 'harvest', targetTile: forest };
+        }
+      }
+    } else {
+      // Have enough trees — find a river tile adjacent to deep sea to build the boat
+      const riverTile = findRiverNearDeepSea(world, tank.x, tank.y, BUILDER_MAX_RANGE);
+      if (riverTile) {
+        const err = world.builderOrder(tank.id, 'boat', riverTile[0], riverTile[1]);
+        if (!err) {
+          mem.builderGoal = { kind: 'build_boat', targetTile: riverTile };
+        }
+      }
+    }
+  }
+
+  // --- Handle the builder sub-goal state machine while builder is active ---
+  private handleBuilderGoal(world: World, tank: Tank, mem: AiMemory, goal: Base): TankInput {
+    const bg = mem.builderGoal;
+
+    // If the builder has returned to the tank, process the result
+    if (tank.builder.phase === 'in_tank') {
+      if (bg.kind === 'harvest') {
+        // Trees harvested. Do we have enough for a boat now?
+        if (tank.trees >= COST_BOAT) {
+          const riverTile = findRiverNearDeepSea(world, tank.x, tank.y, BUILDER_MAX_RANGE);
+          if (riverTile) {
+            const err = world.builderOrder(tank.id, 'boat', riverTile[0], riverTile[1]);
+            if (!err) {
+              mem.builderGoal = { kind: 'build_boat', targetTile: riverTile };
+            } else {
+              mem.builderGoal = { kind: 'none' }; // give up
+            }
+          } else {
+            mem.builderGoal = { kind: 'none' };
+          }
+        } else {
+          // Need more trees — harvest again if available
+          const forest = findNearestTerrain(world, tank.x, tank.y, Terrain.Forest, BUILDER_MAX_RANGE);
+          if (forest) {
+            const err = world.builderOrder(tank.id, 'harvest', forest[0], forest[1]);
+            if (!err) {
+              mem.builderGoal = { kind: 'harvest', targetTile: forest };
+            } else {
+              mem.builderGoal = { kind: 'none' };
+            }
+          } else {
+            mem.builderGoal = { kind: 'none' };
+          }
+        }
+        return { accel: 0, turn: 0, fire: false };
+      }
+
+      if (bg.kind === 'build_boat') {
+        // Boat was built — check if BoatTile exists at the target
+        const [bx, by] = bg.targetTile;
+        const t = world.terrain[idx(bx, by)] as Terrain;
+        if (t === Terrain.BoatTile) {
+          // Navigate to the boat tile to embark
+          mem.builderGoal = { kind: 'none' };
+          // Drive toward the boat tile
+          return steerAndShoot(world, tank, bx + 0.5, by + 0.5, true, false);
+        }
+        // Boat wasn't built (something went wrong) — give up
+        mem.builderGoal = { kind: 'none' };
+        return { accel: 0, turn: 0, fire: false };
+      }
+    }
+
+    // Builder is out — wait (don't issue movement commands)
+    return { accel: 0, turn: 0, fire: false };
+  }
+
+  // --- Find a sieged friendly base to defend ---
+  private findSiegedBase(world: World, tank: Tank): Base | null {
+    if (!this.team || this.team.siegedBases.size === 0) return null;
+    let best: Base | null = null;
+    let bestD = 30; // response radius
+    for (const b of world.bases) {
+      if (b.owner !== tank.faction) continue;
+      if (!this.team.siegedBases.has(b.id)) continue;
+      const d = Math.hypot(b.x + 0.5 - tank.x, b.y + 0.5 - tank.y);
+      if (d < bestD) {
+        bestD = d;
+        best = b;
+      }
+    }
+    return best;
+  }
+
   /**
    * Drop all AI memory. A new war builds a fresh World whose tank ids restart
    * at 1; without this, new NPCs would inherit stale paths/goals from the
@@ -263,6 +659,7 @@ export class NpcController {
    */
   reset(): void {
     this.memories.clear();
+    this.team = null;
   }
 
   private getMemory(tank: Tank): AiMemory {
@@ -281,6 +678,13 @@ export class NpcController {
         aimJitterTick: -Infinity,
         unreachableGoalKey: '',
         unreachableUntil: 0,
+        builderGoal: { kind: 'none' },
+        lastRoadTick: -Infinity,
+        lastWallTick: -Infinity,
+        lastMineTick: -Infinity,
+        lastHarvestTick: -Infinity,
+        dodgeTicks: 0,
+        dodgeDir: 0,
       };
       this.memories.set(tank.id, mem);
     }
@@ -289,22 +693,22 @@ export class NpcController {
 
   /**
    * Tile-level weighted A* (4-connected) over drivable terrain, weighted by
-   * terrain speed so routes prefer roads and open ground. Tiles bordering
-   * deep sea carry a heavy penalty: an unweighted "shortest" path hugs the
-   * coastline through shallow water, where local steering wedges tanks
-   * against the sea edge. Tile resolution matters too — 1-tile bridges and
-   * fords are real corridors a coarser grid would wall off.
+   * terrain speed so routes prefer roads and open ground. When allowDeepSea
+   * is true (tank is on a boat), deep-sea tiles become passable at boat
+   * speed cost. Tiles bordering deep sea carry a heavy penalty for ground
+   * travel to avoid wedging against the coastline.
    */
-  private findPath(world: World, x0: number, y0: number, x1: number, y1: number): [number, number][] {
+  private findPath(
+    world: World, x0: number, y0: number, x1: number, y1: number,
+    allowDeepSea = false,
+  ): [number, number][] {
     const start = tileOf(x0, y0);
     const goal = tileOf(x1, y1);
     if (start === goal) return [];
     this.generation++;
     const gx = goal % MAP_SIZE;
     const gy = (goal / MAP_SIZE) | 0;
-    // manhattan distance, admissible since the cheapest tile (road) costs 1
     const heur = (x: number, y: number) => (Math.abs(gx - x) + Math.abs(gy - y)) * HEURISTIC_WEIGHT;
-    // binary min-heap of [f = g + h, tile]
     const heap: [number, number][] = [[heur(start % MAP_SIZE, (start / MAP_SIZE) | 0), start]];
     this.gScore[start] = 0;
     this.cameFrom[start] = start;
@@ -326,7 +730,7 @@ export class NpcController {
         const ny = cy + dy;
         if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
         const n = ny * MAP_SIZE + nx;
-        const c = tileCost(world, nx, ny);
+        const c = tileCost(world, nx, ny, allowDeepSea);
         if (c === Infinity) continue;
         const ng = this.gScore[cur] + c;
         if (this.stamp[n] !== this.generation || ng < this.gScore[n]) {
@@ -378,23 +782,34 @@ function steerAndShoot(
   const want = Math.atan2(ty - tank.y, tx - tank.x) + aimError;
   const delta = angleDelta(tank.dir, want);
 
-  // local avoidance: probe ahead, veer away from walls and open sea
+  // local avoidance: probe ahead, veer away from walls, open sea, and hostile mines
   const probe = (ang: number) => {
     const t = world.tileAt(tank.x + Math.cos(ang) * 1.6, tank.y + Math.sin(ang) * 1.6);
     return t === Terrain.Building || (t === Terrain.DeepSea && !tank.onBoat);
   };
-  // proportional steering: quantized ±1 turn oscillates around the firing
-  // window forever; analog turn converges
+
+  // Mine probe: detect hostile mines ahead and steer around them
+  const mineProbe = (ang: number) => {
+    const px = Math.floor(tank.x + Math.cos(ang) * 1.6);
+    const py = Math.floor(tank.y + Math.sin(ang) * 1.6);
+    if (px < 0 || py < 0 || px >= MAP_SIZE || py >= MAP_SIZE) return false;
+    const m = world.mines[idx(px, py)] as MineState;
+    if (m === MineState.None) return false;
+    // Neutral mines are hostile to everyone; faction mines hostile to the other faction
+    if (m === MineState.Neutral) return true;
+    return m === (tank.faction === 'dawn' ? MineState.Dusk : MineState.Dawn);
+  };
+
+  // proportional steering
   let turn = Math.max(-1, Math.min(1, delta * 3));
   let blocked = false;
-  if (probe(tank.dir)) {
+  if (probe(tank.dir) || mineProbe(tank.dir)) {
     blocked = true;
     // pick the clearer side
-    turn = probe(tank.dir + 0.7) ? -1 : 1;
+    turn = (probe(tank.dir + 0.7) || mineProbe(tank.dir + 0.7)) ? -1 : 1;
   }
 
   const facing = Math.abs(delta) < 0.1;
-  // slow down for hard turns: a tank at speed can't corner tightly
   const hardTurn = Math.abs(delta) > 0.9 && !blocked;
   return {
     accel: (advance || blocked) && !hardTurn ? 1 : 0,
@@ -409,20 +824,120 @@ function tileOf(x: number, y: number): number {
   return cy * MAP_SIZE + cx;
 }
 
-function tileCost(world: World, x: number, y: number): number {
-  const t = world.terrain[y * MAP_SIZE + x] as Terrain;
-  if (t === Terrain.DeepSea || t === Terrain.Building || TERRAIN[t].tankSpeed === 0) return Infinity;
+function tileCost(world: World, x: number, y: number, allowDeepSea: boolean): number {
+  const t = world.terrain[idx(x, y)] as Terrain;
+  if (t === Terrain.Building) return Infinity;
+  if (t === Terrain.DeepSea) {
+    if (!allowDeepSea) return Infinity;
+    // Boat travel: BOAT_SPEED is 5.8 tiles/sec, faster than most land
+    return 1 / BOAT_SPEED;
+  }
+  if (TERRAIN[t].tankSpeed === 0) return Infinity;
   let cost = 1 / TERRAIN[t].tankSpeed; // road 1, grass 1.33, river/swamp 4
-  for (const [dx, dy] of NEIGHBORS) {
-    const nx = x + dx;
-    const ny = y + dy;
-    if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
-    if ((world.terrain[ny * MAP_SIZE + nx] as Terrain) === Terrain.DeepSea) {
-      cost += 12; // stay off the sea cliff
-      break;
+  // Deep-sea-edge penalty only when not on water (avoid coastal wedging for ground tanks)
+  if (!allowDeepSea) {
+    for (const [dx, dy] of NEIGHBORS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
+      if ((world.terrain[idx(nx, ny)] as Terrain) === Terrain.DeepSea) {
+        cost += 12; // stay off the sea cliff
+        break;
+      }
     }
   }
   return cost;
+}
+
+/** Find the nearest tile of a given terrain type within maxRange (tile units). */
+function findNearestTerrain(
+  world: World, x: number, y: number, terrain: Terrain, maxRange: number,
+): [number, number] | null {
+  const tx = Math.floor(x);
+  const ty = Math.floor(y);
+  for (let r = 1; r <= maxRange; r++) {
+    // Spiral search at radius r
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // ring at radius r
+        const nx = tx + dx;
+        const ny = ty + dy;
+        if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
+        if ((world.terrain[idx(nx, ny)] as Terrain) === terrain) {
+          const d = Math.hypot(nx + 0.5 - x, ny + 0.5 - y);
+          if (d <= maxRange) return [nx, ny];
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** Find a river tile adjacent to deep sea, within range — for boat building. */
+function findRiverNearDeepSea(
+  world: World, x: number, y: number, maxRange: number,
+): [number, number] | null {
+  const tx = Math.floor(x);
+  const ty = Math.floor(y);
+  let best: [number, number] | null = null;
+  let bestD = Infinity;
+  for (let r = 1; r <= maxRange; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const nx = tx + dx;
+        const ny = ty + dy;
+        if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
+        if ((world.terrain[idx(nx, ny)] as Terrain) !== Terrain.River) continue;
+        // Check if any neighbor is deep sea
+        let nearSea = false;
+        for (const [ddx, ddy] of NEIGHBORS) {
+          const sx = nx + ddx;
+          const sy = ny + ddy;
+          if (sx < 0 || sy < 0 || sx >= MAP_SIZE || sy >= MAP_SIZE) continue;
+          if ((world.terrain[idx(sx, sy)] as Terrain) === Terrain.DeepSea) {
+            nearSea = true;
+            break;
+          }
+        }
+        if (nearSea) {
+          const d = Math.hypot(nx + 0.5 - x, ny + 0.5 - y);
+          if (d < bestD && d <= maxRange) {
+            bestD = d;
+            best = [nx, ny];
+          }
+        }
+      }
+    }
+  }
+  return best;
+}
+
+/** Find the nearest friendly base to a tank. */
+function findNearestFriendlyBase(world: World, tank: Tank): Base | null {
+  let best: Base | null = null;
+  let bestD = Infinity;
+  for (const b of world.bases) {
+    if (b.owner !== tank.faction) continue;
+    const d = Math.hypot(b.x + 0.5 - tank.x, b.y + 0.5 - tank.y);
+    if (d < bestD) {
+      bestD = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
+/** Whether a builder can construct on this terrain type (duplicated from utils for pure-function access). */
+function canBuildOn(t: Terrain): boolean {
+  return (
+    t === Terrain.Grass ||
+    t === Terrain.Swamp ||
+    t === Terrain.Crater ||
+    t === Terrain.Rubble ||
+    t === Terrain.Road ||
+    t === Terrain.ShotBuilding
+  );
 }
 
 function heapPush(heap: [number, number][], item: [number, number]): void {
