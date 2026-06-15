@@ -200,6 +200,38 @@ export class Renderer {
       this.drawBoom(px, py, t, b.kind, hash32(Math.round(b.x * 7), Math.round(b.y * 7)));
     }
 
+    // death markers for mutual kills: skull icon that fades over 30s
+    state.deathMarkers = state.deathMarkers.filter((d) => now - d.at < 30000);
+    for (const d of state.deathMarkers) {
+      const age = now - d.at;
+      const fade = age > 25000 ? (30000 - age) / 5000 : age < 500 ? age / 500 : 1;
+      const [px, py] = toScreen(d.x, d.y);
+      if (!onScreen(px, py, 30)) continue;
+      ctx.save();
+      ctx.globalAlpha = fade * 0.85;
+      // skull crosshair circle
+      ctx.strokeStyle = '#e85d5d';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(px, py, this.scale * 0.4, 0, Math.PI * 2);
+      ctx.stroke();
+      // skull text
+      ctx.fillStyle = '#e85d5d';
+      ctx.font = `${Math.round(this.scale * 0.5)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('☠', px, py);
+      // label
+      ctx.font = '9px monospace';
+      ctx.fillStyle = 'rgba(7,8,12,0.7)';
+      const label = `@${d.victimHandle}`;
+      const tw = ctx.measureText(label).width;
+      ctx.fillRect(px - tw / 2 - 2, py + this.scale * 0.4 + 2, tw + 4, 11);
+      ctx.fillStyle = '#e85d5d';
+      ctx.fillText(label, px, py + this.scale * 0.4 + 10);
+      ctx.restore();
+    }
+
     // ambient grade before fog, so fog stays near-black on top of it
     ctx.globalCompositeOperation = 'multiply';
     ctx.fillStyle = this.ambient;
@@ -348,6 +380,32 @@ export class Renderer {
     ctx.fillRect(px - tw / 2 - 3, py - r - 14, tw + 6, 11);
     ctx.fillStyle = isMe ? '#ffffff' : body;
     ctx.fillText(label, px, py - r - 5.5);
+
+    // mutual marker: small green dot above mutual tanks
+    if (t.mutual) {
+      ctx.fillStyle = '#6c8';
+      ctx.beginPath();
+      ctx.arc(px + tw / 2 + 6, py - r - 9, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // bounty marker: gold coin icon above bounty target tanks
+    if (t.bounty) {
+      ctx.save();
+      ctx.fillStyle = '#e8c75d';
+      ctx.beginPath();
+      ctx.arc(px - tw / 2 - 8, py - r - 9, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#a06b1c';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.fillStyle = '#a06b1c';
+      ctx.font = 'bold 8px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('$', px - tw / 2 - 8, py - r - 9);
+      ctx.restore();
+    }
 
     // emote bubble: pops in, floats, fades out
     const emote = state.emotes.get(t.id);

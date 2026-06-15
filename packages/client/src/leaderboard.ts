@@ -23,23 +23,29 @@ function rating(p: PlayerProfile): number {
   return ratingOf(p);
 }
 
-/** Fetch avatars/display names for real atproto DIDs (25 per call). */
+/**
+ * Fetch avatars/display names for real atproto DIDs via the server-side
+ * /api/profiles endpoint (which caches in KV). Returns a Map keyed by DID.
+ */
 async function fetchBskyProfiles(dids: string[]): Promise<Map<string, BskyProfile>> {
   const real = dids.filter((d) => d.startsWith('did:plc:') || d.startsWith('did:web:'));
-  const out = new Map<string, BskyProfile>();
-  for (let i = 0; i < real.length; i += 25) {
-    const chunk = real.slice(i, i + 25);
-    const q = chunk.map((d) => `actors=${encodeURIComponent(d)}`).join('&');
-    try {
-      const res = await fetch(`https://public.api.bsky.app/xrpc/app.bsky.actor.getProfiles?${q}`);
-      if (!res.ok) continue;
-      const data = (await res.json()) as { profiles?: BskyProfile[] };
-      for (const p of data.profiles ?? []) out.set(p.did, p);
-    } catch {
-      // AppView unreachable: rows fall back to stored handles
+  if (real.length === 0) return new Map();
+  const params = new URLSearchParams();
+  for (const d of real) params.append('dids', d);
+  try {
+    const res = await fetch(`/api/profiles?${params}`);
+    if (!res.ok) return new Map();
+    const data = (await res.json()) as {
+      profiles?: Record<string, { handle: string; displayName?: string; avatar?: string; description?: string }>;
+    };
+    const out = new Map<string, BskyProfile>();
+    for (const [did, p] of Object.entries(data.profiles ?? {})) {
+      out.set(did, { did, ...p });
     }
+    return out;
+  } catch {
+    return new Map();
   }
-  return out;
 }
 
 export function startLeaderboard(root: HTMLElement): void {

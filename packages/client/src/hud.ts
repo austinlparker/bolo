@@ -38,6 +38,7 @@ export class Hud {
   private war: HTMLElement;
   private toolsEl: HTMLElement;
   private feed: HTMLElement;
+  private bountiesEl: HTMLElement;
   private chatLog: HTMLElement;
   chatInput: HTMLInputElement;
   chatForm: HTMLFormElement;
@@ -50,6 +51,8 @@ export class Hud {
   private lastUpdateAt = 0;
   /** last innerHTML written per panel, to skip no-op DOM rebuilds */
   private htmlCache = new Map<HTMLElement, string>();
+  /** tracks whether the nemesis banner has been shown this session */
+  private nemesisShown = false;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -59,6 +62,7 @@ export class Hud {
       <div id="hud-status" class="hud kpanel"></div>
       <div id="hud-tools" class="hud kpanel"></div>
       <div id="hud-feed" class="hud"></div>
+      <div id="hud-bounties" class="hud"></div>
       <div id="hud-chat" class="hud">
         <div id="chat-log"></div>
         <form id="chat-form">
@@ -128,6 +132,7 @@ export class Hud {
               <div class="help-row"><span>send builder to gun cursor</span><span class="keys"><kbd>G</kbd></span></div>
               <div class="help-row"><span>build on your own tile</span><span class="keys"><kbd>V</kbd></span></div>
               <div class="help-row"><span>recall builder (refunds)</span><span class="keys"><kbd>R</kbd></span></div>
+              <div class="help-row"><span>escalate a bounty (if one's active)</span><span class="keys"><kbd>B</kbd></span></div>
               <h3>THE WAR</h3>
               <div class="help-row"><span>claim neutral bases by parking on them</span><span></span></div>
               <div class="help-row"><span>shell enemy bases until their defenses fall, then claim</span><span></span></div>
@@ -152,6 +157,7 @@ export class Hud {
     this.war = document.getElementById('hud-war')!;
     this.toolsEl = document.getElementById('hud-tools')!;
     this.feed = document.getElementById('hud-feed')!;
+    this.bountiesEl = document.getElementById('hud-bounties')!;
     this.chatLog = document.getElementById('chat-log')!;
     this.chatInput = document.getElementById('chat-input') as HTMLInputElement;
     this.chatForm = document.getElementById('chat-form') as HTMLFormElement;
@@ -518,12 +524,27 @@ export class Hud {
     this.chatInput.blur();
   }
 
-  addChat(msg: ChatBroadcastMsg): void {
+  addChat(msg: ChatBroadcastMsg, state?: GameState): void {
+    // lookup avatar and mutual status from social profiles by matching handle
+    const prof = state ? Object.values(state.socialProfiles).find((p) => p.handle === msg.from) : undefined;
+    const profDid = prof ? Object.entries(state!.socialProfiles).find(([, p]) => p.handle === msg.from)?.[0] : undefined;
+    const isMutual = profDid ? state?.mutuals.has(profDid) : false;
+    let avatarHtml = '';
+    if (msg.faction !== 'system') {
+      if (prof?.avatar) {
+        avatarHtml = `<img class="chat-avatar" src="${escapeAttr(prof.avatar)}" alt="" loading="lazy" />`;
+      } else {
+        avatarHtml = `<span class="chat-avatar chat-avatar-fallback f-${msg.faction}">${escapeHtml(msg.from.charAt(0).toUpperCase())}</span>`;
+      }
+    }
     const div = document.createElement('div');
+    div.className = `chat-msg${isMutual ? ' chat-mutual' : ''}`;
     const name = document.createElement('span');
     name.className = `f-${msg.faction}`;
     name.textContent = msg.faction === 'system' ? '· ' : `${msg.from}: `;
-    div.appendChild(name);
+    div.innerHTML = avatarHtml;
+    div.querySelector('img, span.chat-avatar')?.after(name);
+    if (!avatarHtml) div.appendChild(name);
     div.appendChild(document.createTextNode(msg.text));
     this.chatLog.appendChild(div);
     while (this.chatLog.children.length > 40) this.chatLog.firstChild?.remove();
@@ -605,7 +626,32 @@ export class Hud {
 
     if (state.war) this.setHtml(this.war, warLine(state.war, state.bases));
 
+    // nemesis indicator: show banner only once when nemesis comes online
+    if (state.nemesis?.online && !this.nemesisShown) {
+      this.showBanner(`⚠ NEMESIS ONLINE: <span class="f-dusk">@${escapeHtml(state.nemesis.handle)}</span> killed you ${state.nemesis.killedBy}× (${state.nemesis.youKilled}–${state.nemesis.killedBy})`, 5000);
+      this.nemesisShown = true;
+    } else if (!state.nemesis?.online) {
+      this.nemesisShown = false;
+    }
+
+    // mutuals online indicator
+    const mutualCount = state.mutuals.size;
+    if (state.war) this.setHtml(this.war, `${warLine(state.war, state.bases)}${mutualCount > 0 ? `<span class="mutual-indicator">★${mutualCount}</span>` : ''}`);
+
     this.setHtml(this.feed, state.feed.map((l) => `<div>${escapeHtml(l)}</div>`).join(''));
+
+    // bounty panel
+    if (state.bounties.length > 0) {
+      this.setHtml(this.bountiesEl, state.bounties.map((b) => {
+        const avatar = state.socialProfiles[b.targetDid]?.avatar;
+        const avHtml = avatar
+          ? `<img class="bounty-avatar" src="${escapeAttr(avatar)}" alt="" loading="lazy" />`
+          : `<span class="bounty-avatar bounty-avatar-fallback">💰</span>`;
+        return `<div class="bounty-item">${avHtml}<span><b>@${escapeHtml(b.targetHandle)}</b> <span class="bounty-reward">+${b.reward}</span><br/><small class="dim">avenging @${escapeHtml(b.victimHandle)} · [B] to escalate</small></span></div>`;
+      }).join(''));
+    } else {
+      this.setHtml(this.bountiesEl, '');
+    }
 
     this.drawMinimap(state);
   }
@@ -674,4 +720,8 @@ export function warLine(war: WarInfo, bases?: { owner: Owner }[]): string {
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escapeAttr(s: string): string {
+  return escapeHtml(s).replace(/"/g, '&quot;');
 }

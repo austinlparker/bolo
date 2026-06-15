@@ -118,7 +118,7 @@ describe('base capture', () => {
     expect(base.owner).toBe('dusk');
     expect(base.hp).toBeGreaterThanOrEqual(Math.max(before, BASE_CAPTURE_HP));
     expect(tank.caps).toBe(1);
-    expect(events).toContainEqual({ e: 'base_captured', baseId: base.id, by: 'dusk', handle: 'dusk.test' });
+    expect(events).toContainEqual({ e: 'base_captured', baseId: base.id, by: 'dusk', handle: 'dusk.test', byDid: 'did:test:dusk', x: expect.any(Number), y: expect.any(Number) });
   });
 
   it('sieging an enemy base grinds hp and zaps the attacker, without flipping it', () => {

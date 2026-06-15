@@ -19,15 +19,21 @@ import {
   type Faction,
   type PlayerProfile,
   SPECTATOR_HZ,
+  type StateMsg,
   TICK_HZ,
   TICK_MS,
   type WarRecord,
+  BOUNTY_AUTO_REWARD,
+  BOUNTY_TTL_TICKS,
+  BOUNTY_MAX_ESCALATION,
+  type Bounty,
 } from '@bolo/shared';
 import { verifyToken } from '../auth';
 import { type Env, sessionSecret } from '../env';
 import { NpcController } from '../sim/npc';
 import { World } from '../sim/world';
 import { StatsSink } from '../stats';
+import { fetchProfiles, computeMutuals } from '../social';
 import { SessionStore, type Session } from './session-store';
 import { ViewBuilder } from './view-builder';
 import { WarManager } from './war-manager';
@@ -49,8 +55,10 @@ export class GameDO implements DurableObject {
   private world: World | null = null;
   private store = new SessionStore();
   private war = new WarManager();
-  private views = new ViewBuilder(this.store, this.war.profiles);
+  private views = new ViewBuilder(this.store, this.war.profiles, (did: string) => this.computeNemesis(did), (viewerDid: string, targetDid: string) => this.isBountyTargetFor(viewerDid, targetDid));
   private npc = new NpcController();
+  /** active bounties keyed by target DID */
+  private bounties = new Map<string, Bounty>();
   private phase: 'active' | 'intermission' = 'active';
   private nextWarAt: number | null = null;
   /**
@@ -215,6 +223,7 @@ export class GameDO implements DurableObject {
       pendingTerrain: [],
       msgBudget: MSG_BUDGET_PER_TICK,
       lastEmoteAt: 0,
+      mutuals: new Set(),
     };
     let helloed = false;
 
@@ -243,6 +252,15 @@ export class GameDO implements DurableObject {
     const drop = () => {
       if (!this.store.has(session)) return;
       this.store.remove(session);
+      // remove this player from other sessions' mutual sets
+      if (session.did) {
+        for (const other of this.store) {
+          if (other.mutuals.has(session.did)) {
+            other.mutuals.delete(session.did);
+            this.store.send(other, { t: 'mutuals', dids: [...other.mutuals] });
+          }
+        }
+      }
       if (session.tankId !== undefined) {
         const tank = this.world?.tanks.get(session.tankId);
         if (tank) this.war.foldStats(tank);
@@ -303,7 +321,310 @@ export class GameDO implements DurableObject {
     this.store.add(session);
     this.store.send(session, this.views.welcomeFor(world, session, this.phase, this.nextWarAt));
     this.store.broadcastChat('system', `${session.handle ?? 'a spectator'} ${role === 'player' ? 'joined the war' : 'is watching'}`);
+    // fetch and broadcast social profiles for all connected real-DID players
+    this.sendSocialData();
+    // compute mutuals for the new player and update existing sessions
+    this.updateMutualsOnConnect(session);
+    // send current active bounties
+    this.sendBountiesTo(session);
     this.startTicking();
+  }
+
+  // ---------- social ----------
+
+  /**
+   * Fetch profiles for all connected real-DID players and broadcast a
+   * SocialDataMsg to everyone. KV-cached so reconnects are fast.
+   * Called on player connect and when a new player joins.
+   */
+  private async sendSocialData(): Promise<void> {
+    const dids = this.connectedDids();
+    if (dids.length === 0) return;
+    const profiles = await fetchProfiles(dids, this.env);
+    const obj: Record<string, { avatar?: string; displayName?: string; handle?: string }> = {};
+    for (const did of dids) {
+      const p = profiles.get(did);
+      if (p) {
+        obj[did] = { avatar: p.avatar, displayName: p.displayName, handle: p.handle };
+      }
+    }
+    if (Object.keys(obj).length > 0) {
+      this.store.broadcast({ t: 'social_data', profiles: obj });
+    }
+  }
+
+  /** DIDs of all connected player sessions with real atproto DIDs. */
+  private connectedDids(): string[] {
+    const out: string[] = [];
+    for (const s of this.store) {
+      if (s.role === 'player' && s.did && (s.did.startsWith('did:plc:') || s.did.startsWith('did:web:'))) {
+        out.push(s.did);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Compute mutuals for a newly-connected player and update existing sessions.
+   * Mutuals are symmetric, so when the new player is mutual with an existing
+   * player, both sessions get updated.
+   */
+  private async updateMutualsOnConnect(session: Session): Promise<void> {
+    if (!session.did || !session.did.startsWith('did:plc:') && !session.did.startsWith('did:web:')) return;
+    const others = this.connectedDids().filter((d) => d !== session.did);
+    if (others.length === 0) return;
+
+    const mutualDids = await computeMutuals(session.did, others, this.env);
+    session.mutuals = mutualDids;
+
+    // symmetry: for each mutual, add the new player to their session's set too
+    for (const s of this.store) {
+      if (s === session || !s.did) continue;
+      if (mutualDids.has(s.did)) {
+        s.mutuals.add(session.did);
+        this.store.send(s, { t: 'mutuals', dids: [...s.mutuals] });
+      }
+    }
+
+    // send the new player their own mutuals list
+    if (session.mutuals.size > 0) {
+      this.store.send(session, { t: 'mutuals', dids: [...session.mutuals] });
+    }
+  }
+
+  /**
+   * Process kill events for rivalry tracking. Updates each player's rivalry
+   * record on their profile and emits revenge/payback events when conditions
+   * are met. Returns extra events to inject into the per-player state.
+   */
+  private processRivalries(events: { e: string; killerDid?: string; victimDid?: string; killer?: string; victim?: string }[]): { e: 'revenge' | 'payback'; killerHandle: string; victimHandle: string }[] {
+    const extra: { e: 'revenge' | 'payback'; killerHandle: string; victimHandle: string }[] = [];
+    for (const ev of events) {
+      if (ev.e !== 'kill' || !ev.killerDid || !ev.victimDid) continue;
+      const killerProfile = this.profiles.get(ev.killerDid);
+      const victimProfile = this.profiles.get(ev.victimDid);
+      if (!killerProfile || !victimProfile) continue;
+
+      // update rivalry records on both profiles
+      killerProfile.rivalries ??= {};
+      victimProfile.rivalries ??= {};
+      const kr = (killerProfile.rivalries[ev.victimDid] ??= { k: 0, d: 0 });
+      const vr = (victimProfile.rivalries[ev.killerDid] ??= { k: 0, d: 0 });
+      kr.k++;
+      vr.d++;
+
+      // revenge: killer just killed their top nemesis (the person who killed them most)
+      let nemesisDid: string | null = null;
+      let nemesisDeaths = 0;
+      for (const [otherDid, counts] of Object.entries(killerProfile.rivalries)) {
+        if (counts.d > nemesisDeaths) {
+          nemesisDeaths = counts.d;
+          nemesisDid = otherDid;
+        }
+      }
+      if (nemesisDid && nemesisDid === ev.victimDid && nemesisDeaths >= 3) {
+        extra.push({ e: 'revenge', killerHandle: ev.killer!, victimHandle: ev.victim! });
+      }
+
+      // payback: killer just killed someone who killed them at least once this war
+      if (vr.k > 0 && kr.d > 0) {
+        extra.push({ e: 'payback', killerHandle: ev.killer!, victimHandle: ev.victim! });
+      }
+    }
+    return extra;
+  }
+
+  /**
+   * Compute a player's top nemesis (the DID that has killed them the most).
+   * Returns null if no rivalries exist.
+   */
+  private computeNemesis(did: string): { did: string; handle: string; killedBy: number; youKilled: number; online: boolean } | null {
+    const profile = this.profiles.get(did);
+    if (!profile?.rivalries) return null;
+    let nemesisDid: string | null = null;
+    let killedBy = 0;
+    for (const [otherDid, counts] of Object.entries(profile.rivalries)) {
+      if (counts.d > killedBy) {
+        killedBy = counts.d;
+        nemesisDid = otherDid;
+      }
+    }
+    if (!nemesisDid || killedBy === 0) return null;
+    const nemesisProfile = this.profiles.get(nemesisDid);
+    if (!nemesisProfile) return null;
+    const online = [...this.store].some((s) => s.did === nemesisDid);
+    const youKilled = profile.rivalries[nemesisDid]?.k ?? 0;
+    return { did: nemesisDid, handle: nemesisProfile.handle, killedBy, youKilled, online };
+  }
+
+  // ---------- bounties ----------
+
+  /** Check if viewerDid can claim a bounty on targetDid. */
+  private isBountyTargetFor(viewerDid: string, targetDid: string): boolean {
+    const bounty = this.bounties.get(targetDid);
+    return !!bounty && bounty.hunters.includes(viewerDid);
+  }
+
+  /**
+   * Create a bounty when a mutual kill occurs. The killer becomes the target;
+   * all connected mutuals of the victim become hunters.
+   */
+  private createBounty(killerDid: string, killerHandle: string, victimDid: string, world: { tanks: Map<number, { did: string; id: number }> }): void {
+    // don't stack bounties on the same target
+    if (this.bounties.has(killerDid)) {
+      // refresh TTL and add more hunters
+      const existing = this.bounties.get(killerDid)!;
+      for (const s of this.store) {
+        if (s.did && s.mutuals.has(victimDid) && !existing.hunters.includes(s.did)) {
+          existing.hunters.push(s.did);
+        }
+      }
+      return;
+    }
+    // collect hunters: all connected mutuals of the victim
+    const hunters: string[] = [];
+    for (const s of this.store) {
+      if (s.did && s.mutuals.has(victimDid)) hunters.push(s.did);
+    }
+    if (hunters.length === 0) return;
+    // find the target's tank id
+    let targetTankId = 0;
+    for (const tank of world.tanks.values()) {
+      if (tank.did === killerDid) { targetTankId = tank.id; break; }
+    }
+    this.bounties.set(killerDid, {
+      targetDid: killerDid,
+      targetHandle: killerHandle,
+      targetTankId,
+      hunters,
+      baseReward: BOUNTY_AUTO_REWARD,
+      bonusReward: 0,
+      createdAtTick: world instanceof Map ? 0 : (this.world?.tick ?? 0),
+      victimDid,
+      escalatedBy: [],
+    });
+  }
+
+  /**
+   * Check for bounty claims from kill events and award rewards.
+   * Returns claim notifications to broadcast.
+   */
+  private checkBountyClaims(events: { e: string; killerDid?: string; victimDid?: string; killer?: string; victim?: string }[]): { targetDid: string; targetHandle: string; claimerDid: string; claimerHandle: string; reward: number }[] {
+    const claims: { targetDid: string; targetHandle: string; claimerDid: string; claimerHandle: string; reward: number }[] = [];
+    for (const ev of events) {
+      if (ev.e !== 'kill' || !ev.victimDid || !ev.killerDid) continue;
+      const bounty = this.bounties.get(ev.victimDid);
+      if (!bounty) continue;
+      if (!bounty.hunters.includes(ev.killerDid)) continue;
+      // bounty claimed!
+      const reward = bounty.baseReward + bounty.bonusReward;
+      const claimerProfile = this.profiles.get(ev.killerDid);
+      const claimerHandle = claimerProfile?.handle ?? ev.killer ?? 'unknown';
+      // award bonus kills to the claimer's profile
+      if (claimerProfile) {
+        claimerProfile.kills += reward;
+      }
+      // also add to the claimer's live tank stats if connected
+      for (const s of this.store) {
+        if (s.did === ev.killerDid && s.tankId !== undefined) {
+          const tank = this.world?.tanks.get(s.tankId);
+          if (tank) tank.kills += reward;
+          break;
+        }
+      }
+      claims.push({
+        targetDid: bounty.targetDid,
+        targetHandle: bounty.targetHandle,
+        claimerDid: ev.killerDid,
+        claimerHandle,
+        reward,
+      });
+      this.bounties.delete(ev.victimDid);
+    }
+    return claims;
+  }
+
+  /** Remove expired bounties. */
+  private expireBounties(): void {
+    if (!this.world) return;
+    for (const [did, bounty] of this.bounties) {
+      if (this.world.tick - bounty.createdAtTick > BOUNTY_TTL_TICKS) {
+        this.bounties.delete(did);
+      }
+    }
+  }
+
+  /** Broadcast the current bounty list to all players. */
+  private broadcastBounties(): void {
+    if (this.bounties.size === 0) {
+      this.store.broadcast({ t: 'bounty_active', bounties: [] });
+      return;
+    }
+    const bounties = [];
+    for (const bounty of this.bounties.values()) {
+      const victimProfile = this.profiles.get(bounty.victimDid);
+      bounties.push({
+        targetDid: bounty.targetDid,
+        targetHandle: bounty.targetHandle,
+        reward: bounty.baseReward + bounty.bonusReward,
+        victimHandle: victimProfile?.handle ?? 'unknown',
+      });
+    }
+    this.store.broadcast({ t: 'bounty_active', bounties });
+  }
+
+  /** Send current bounties to a specific session (on connect). */
+  private sendBountiesTo(session: Session): void {
+    if (this.bounties.size === 0) return;
+    const bounties = [];
+    for (const bounty of this.bounties.values()) {
+      const victimProfile = this.profiles.get(bounty.victimDid);
+      bounties.push({
+        targetDid: bounty.targetDid,
+        targetHandle: bounty.targetHandle,
+        reward: bounty.baseReward + bounty.bonusReward,
+        victimHandle: victimProfile?.handle ?? 'unknown',
+      });
+    }
+    this.store.send(session, { t: 'bounty_active', bounties });
+  }
+
+  /**
+   * Process bounty lifecycle: create bounties from mutual kills, check claims,
+   * and expire old bounties. Broadcasts claims and updates.
+   */
+  private processBounties(events: { e: string; killerDid?: string; victimDid?: string; killer?: string; victim?: string }[]): void {
+    // expire old bounties
+    const sizeBefore = this.bounties.size;
+    this.expireBounties();
+
+    // create bounties from mutual kills
+    for (const ev of events) {
+      if (ev.e !== 'kill' || !ev.killerDid || !ev.victimDid) continue;
+      // check if the victim has mutuals who are connected (potential hunters)
+      let hasHunter = false;
+      for (const s of this.store) {
+        if (s.did && s.mutuals.has(ev.victimDid)) { hasHunter = true; break; }
+      }
+      if (hasHunter) {
+        this.createBounty(ev.killerDid, ev.killer!, ev.victimDid, this.world!);
+      }
+    }
+
+    // check for claims
+    const claims = this.checkBountyClaims(events);
+    for (const claim of claims) {
+      this.store.broadcast({
+        t: 'bounty_claimed',
+        ...claim,
+      });
+      this.store.broadcastChat('system', `💰 BOUNTY CLAIMED: @${claim.claimerHandle} → @${claim.targetHandle} +${claim.reward}`);
+    }
+
+    // broadcast bounty list if it changed
+    if (claims.length > 0 || this.bounties.size !== sizeBefore) {
+      this.broadcastBounties();
+    }
   }
 
   private handleMessage(session: Session, msg: ClientMsg): void {
@@ -327,6 +648,21 @@ export class GameDO implements DurableObject {
       if (now - session.lastEmoteAt < EMOTE_COOLDOWN_MS) return;
       session.lastEmoteAt = now;
       this.store.broadcast({ t: 'emoted', tankId: session.tankId, kind });
+      return;
+    }
+    if (msg.t === 'bounty') {
+      if (!session.did) return;
+      const bounty = this.bounties.get(msg.targetDid);
+      if (!bounty) return;
+      // only hunters can escalate
+      if (!bounty.hunters.includes(session.did)) return;
+      // one escalation per player per bounty
+      if (bounty.escalatedBy.includes(session.did)) return;
+      // cap total bonus
+      if (bounty.bonusReward >= BOUNTY_MAX_ESCALATION) return;
+      bounty.bonusReward++;
+      bounty.escalatedBy.push(session.did);
+      this.broadcastBounties();
       return;
     }
     if (session.role !== 'player' || session.tankId === undefined || this.phase !== 'active') {
@@ -419,6 +755,13 @@ export class GameDO implements DurableObject {
     const warMinutes = world.tick / TICK_HZ / 60;
     const result = world.doTick(warMinutes);
 
+    // rivalry tracking: update kill counts between real players and emit
+    // revenge/payback events for per-viewer event injection
+    const extraEvents = this.processRivalries(result.events);
+
+    // bounty system: create bounties from mutual kills, check claims, expire
+    this.processBounties(result.events);
+
     if (this.statsSink.enabled && result.stats.length) {
       const { players } = this.store.playerSpectatorCounts();
       for (const ev of result.stats) {
@@ -432,19 +775,51 @@ export class GameDO implements DurableObject {
     }
     if (counter % (TICK_HZ * 10) === 0) this.statsSink.flush();
 
-    // fan out per-player state
+    // shared event/pills/bases/terrain base for all player state messages
     const stateBase = {
       pills: result.pillsChanged ? world.pills : undefined,
       bases: result.basesChanged ? world.bases : undefined,
       terrain: result.terrainChanges.length ? result.terrainChanges : undefined,
-      events: result.events.length ? result.events : undefined,
+      events: [...result.events, ...extraEvents].length ? [...result.events, ...extraEvents] : undefined,
     };
+
+    // fan out per-player state with per-viewer mutual_killed events
     for (const session of this.store) {
       if (session.role === 'spectator') {
         session.pendingTerrain.push(...result.terrainChanges);
         continue;
       }
-      this.store.send(session, this.views.stateFor(world, session, result.mineChanges, stateBase));
+      // inject mutual_killed events for this viewer's mutuals
+      const perViewerEvents: StateMsg['events'] = [];
+      if (session.did) {
+        for (const ev of result.events) {
+          if (ev.e === 'kill' && ev.victimDid && ev.killerDid && session.mutuals.has(ev.victimDid)) {
+            perViewerEvents.push({
+              e: 'mutual_killed',
+              killerDid: ev.killerDid,
+              killerHandle: ev.killer,
+              victimDid: ev.victimDid,
+              victimHandle: ev.victim,
+              x: ev.x ?? 0,
+              y: ev.y ?? 0,
+              cause: ev.cause,
+            });
+          } else if (ev.e === 'base_captured' && ev.byDid && session.mutuals.has(ev.byDid)) {
+            perViewerEvents.push({
+              e: 'mutual_capture',
+              baseId: ev.baseId,
+              byDid: ev.byDid,
+              byHandle: ev.handle,
+              x: ev.x ?? 0,
+              y: ev.y ?? 0,
+            });
+          }
+        }
+      }
+      const sessionBase = perViewerEvents.length > 0
+        ? { ...stateBase, events: [...(stateBase.events ?? []), ...perViewerEvents] }
+        : stateBase;
+      this.store.send(session, this.views.stateFor(world, session, result.mineChanges, sessionBase));
     }
 
     // spectator frames at SPECTATOR_HZ; most spectators get byte-identical

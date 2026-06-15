@@ -109,7 +109,7 @@ export class BaseSystem {
           base.hp = Math.max(base.hp, BASE_CAPTURE_HP);
           tank.caps++;
           this.host.basesChanged = true;
-          events.push({ e: 'base_captured', baseId: base.id, by: tank.faction, handle: tank.handle });
+          events.push({ e: 'base_captured', baseId: base.id, by: tank.faction, handle: tank.handle, byDid: tank.npc ? undefined : tank.did, x: base.x, y: base.y });
           this.host.stats.push({
             name: 'base_capture',
             base_id: base.id,

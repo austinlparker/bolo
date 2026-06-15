@@ -139,4 +139,26 @@ export interface PlayerProfile {
   warsWon: number;
   firstSeen: number;
   lastSeen: number;
+  /** rivalry stats: otherDID → { k: times you killed them, d: times they killed you } */
+  rivalries?: Record<string, { k: number; d: number }>;
+}
+
+/** A bounty placed on a player who killed someone's mutual. */
+export interface Bounty {
+  targetDid: string;
+  targetHandle: string;
+  /** current tank id of the target (updated on respawn) */
+  targetTankId: number;
+  /** DIDs of players who can claim this bounty (mutuals of the victim) */
+  hunters: string[];
+  /** base reward from auto-placement */
+  baseReward: number;
+  /** extra reward from player escalation */
+  bonusReward: number;
+  /** tick this bounty was created */
+  createdAtTick: number;
+  /** the mutual whose death triggered this bounty */
+  victimDid: string;
+  /** DIDs who have already escalated (to prevent double-escalation) */
+  escalatedBy: string[];
 }
