@@ -152,6 +152,26 @@ export class Input {
         dispatchBuilder(false);
         return;
       }
+      if (ev.code === 'KeyB' && !ev.repeat) {
+        // bounty escalation: find the nearest bounty target tank in view
+        const me = state.me();
+        if (me?.alive) {
+          let nearest: { did: string; dist: number } | null = null;
+          for (const it of state.tanks.values()) {
+            if (!it.cur.alive || it.cur.npc || it.cur.id === me.id) continue;
+            if (!it.cur.bounty || !it.cur.did) continue;
+            const dist = Math.hypot(it.cur.x - me.x, it.cur.y - me.y);
+            if (!nearest || dist < nearest.dist) nearest = { did: it.cur.did, dist };
+          }
+          if (nearest) {
+            net.send({ t: 'bounty', targetDid: nearest.did });
+            hud.showToast('💰 bounty escalated (+1 reward)', 1500);
+          } else {
+            hud.showToast('no bounty target nearby', 1500);
+          }
+        }
+        return;
+      }
       if (ev.code === 'KeyX' && !ev.repeat) {
         this.cruise = 0; // emergency stop: zero the held throttle
         this.doSend();

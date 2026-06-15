@@ -162,6 +162,10 @@ export class DamageSystem {
       killer: killer?.handle ?? (cause === 'sea' ? 'the sea' : cause),
       victim: tank.handle,
       cause,
+      killerDid: killer && !killer.npc ? killer.did : undefined,
+      victimDid: !tank.npc ? tank.did : undefined,
+      x: tank.x,
+      y: tank.y,
     });
     events.push({ e: 'boom', x: tank.x, y: tank.y, kind: 'shell' });
   }

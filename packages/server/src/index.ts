@@ -5,6 +5,7 @@
 import { mintToken, pdsFromDidDoc, resolveDidDoc, resolveHandle, verifyAtprotoSession } from './auth';
 import { type Env, sessionSecret } from './env';
 import { clientMetadata, handleOauthCallback, handleOauthLogin } from './oauth';
+import { fetchProfiles } from './social';
 
 export { GameDO } from './do/game';
 
@@ -50,6 +51,17 @@ export default {
     if (url.pathname === '/api/war' || url.pathname === '/api/status') {
       const res = await world().fetch(new Request(new URL('/status', url.origin)));
       return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', ...CORS } });
+    }
+
+    if (url.pathname === '/api/profiles' && request.method === 'GET') {
+      const dids = url.searchParams.getAll('dids').filter(Boolean);
+      if (dids.length === 0) return json({ profiles: {} });
+      const profiles = await fetchProfiles(dids, env);
+      const obj: Record<string, { handle: string; displayName?: string; avatar?: string; description?: string }> = {};
+      for (const [did, p] of profiles) {
+        obj[did] = { handle: p.handle, displayName: p.displayName, avatar: p.avatar, description: p.description };
+      }
+      return json({ profiles: obj });
     }
 
     if (url.pathname === '/api/login/start' && request.method === 'POST') {

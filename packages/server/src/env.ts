@@ -1,6 +1,8 @@
 export interface Env {
   GAME: DurableObjectNamespace;
   ASSETS: Fetcher;
+  /** KV namespace for cached Bluesky social data (profiles, relationships) */
+  SOCIAL_CACHE: KVNamespace;
   /** "1" enables /api/login/dev (no atproto verification) for local play */
   DEV_AUTH: string;
   /** HMAC key for session tokens; set via `wrangler secret put SESSION_SECRET` */

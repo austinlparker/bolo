@@ -29,6 +29,10 @@ export class ViewBuilder {
   constructor(
     private store: SessionStore,
     private profiles: Map<string, PlayerProfile>,
+    /** callback to compute nemesis for a DID (returns null if none) */
+    private nemesisFn: ((did: string) => { did: string; handle: string; killedBy: number; youKilled: number; online: boolean } | null) | null = null,
+    /** callback: can viewerDid claim a bounty on targetDid? */
+    private bountyFn: ((viewerDid: string, targetDid: string) => boolean) | null = null,
   ) {}
 
   welcomeFor(world: World, session: Session, phase: 'active' | 'intermission', nextWarAt: number | null): WelcomeMsg {
@@ -56,6 +60,8 @@ export class ViewBuilder {
       pills: world.pills,
       bases: world.bases,
       tick: world.tick,
+      nemesis: session.did ? (this.nemesisFn?.(session.did) ?? undefined) : undefined,
+      mutuals: session.did && session.mutuals.size > 0 ? [...session.mutuals] : undefined,
     };
   }
 
@@ -90,6 +96,8 @@ export class ViewBuilder {
         handle: tank.handle,
         faction: tank.faction,
         npc: tank.npc,
+        // include DID for real players so the client can resolve avatars/bounties
+        did: tank.npc ? undefined : tank.did,
         x: round2(tank.x),
         y: round2(tank.y),
         dir: round2(tank.dir),
@@ -97,6 +105,14 @@ export class ViewBuilder {
         alive: tank.alive,
         onBoat: tank.onBoat,
       };
+      // mutual marker: flag tanks driven by the viewer's Bluesky mutuals
+      if (!tank.npc && session.did && session.mutuals.has(tank.did)) {
+        view.mutual = true;
+      }
+      // bounty marker: flag tanks that are bounty targets for the viewer
+      if (!tank.npc && session.did && this.bountyFn?.(session.did, tank.did)) {
+        view.bounty = true;
+      }
       if (tank.id === session.tankId) {
         view.armor = tank.armor;
         view.shells = tank.shells;

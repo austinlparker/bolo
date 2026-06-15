@@ -16,6 +16,8 @@ export interface Session {
   pendingTerrain: [number, number, number][];
   msgBudget: number;
   lastEmoteAt: number;
+  /** DIDs of currently-connected Bluesky mutuals (follows both ways) */
+  mutuals: Set<string>;
 }
 
 export class SessionStore {

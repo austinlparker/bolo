@@ -142,3 +142,9 @@ export const EMOTES = ['happy', 'angry', 'sad', 'heart', 'laugh', 'alert', 'ques
 export type EmoteKind = (typeof EMOTES)[number];
 export const EMOTE_COOLDOWN_MS = 1500;
 export const EMOTE_SHOW_MS = 2600;
+
+// --- Bounties ---
+// Auto-placed on mutual kills; players can escalate by pressing B.
+export const BOUNTY_AUTO_REWARD = 1; // bonus kill credits from auto-placement
+export const BOUNTY_TTL_TICKS = TICK_HZ * 300; // 5 minutes at 10Hz
+export const BOUNTY_MAX_ESCALATION = 3; // max bonus reward per bounty from escalation

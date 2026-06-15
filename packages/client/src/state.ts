@@ -79,6 +79,16 @@ export class GameState {
   feed: string[] = [];
   /** active emote bubbles: tankId -> { kind, at } */
   emotes = new Map<number, { kind: string; at: number }>();
+  /** death markers for mutual kills: { x, y, at, victimHandle, killerHandle } */
+  deathMarkers: { x: number; y: number; at: number; victimHandle: string; killerHandle: string }[] = [];
+  /** social profiles keyed by DID: { avatar, displayName } */
+  socialProfiles: Record<string, { avatar?: string; displayName?: string; handle?: string }> = {};
+  /** your top nemesis (from welcome message) */
+  nemesis: { did: string; handle: string; killedBy: number; youKilled: number; online: boolean } | null = null;
+  /** DIDs of your currently-connected Bluesky mutuals */
+  mutuals = new Set<string>();
+  /** active bounty targets visible to this player */
+  bounties: { targetDid: string; targetHandle: string; reward: number; victimHandle: string }[] = [];
 
   // ---------- client-side prediction (own tank) ----------
   /** current input the player is sending to the server */
@@ -116,12 +126,26 @@ export class GameState {
     this.war = msg.war;
     this.you = msg.you;
     this.profile = msg.profile ?? null;
+    this.nemesis = msg.nemesis ?? null;
+    this.mutuals = new Set(msg.mutuals ?? []);
     this.tick = msg.tick;
     this.tanks.clear();
     this.shells = [];
     this.builders = [];
     this.mapVersion++;
     this.terrainLog = [];
+  }
+
+  applySocialData(profiles: Record<string, { avatar?: string; displayName?: string; handle?: string }>): void {
+    this.socialProfiles = { ...this.socialProfiles, ...profiles };
+  }
+
+  applyMutuals(dids: string[]): void {
+    this.mutuals = new Set(dids);
+  }
+
+  applyBountyActive(bounties: { targetDid: string; targetHandle: string; reward: number; victimHandle: string }[]): void {
+    this.bounties = bounties;
   }
 
   applyState(msg: StateMsg): void {
@@ -196,6 +220,19 @@ export class GameState {
         this.pushFeed(`new ${e.by} pillbox dug in`);
         break;
       case 'builder_killed':
+        break;
+      case 'revenge':
+        this.pushFeed(`★ REVENGE! ${e.killerHandle} struck back at ${e.victimHandle}`);
+        break;
+      case 'payback':
+        this.pushFeed(`${e.killerHandle} got payback on ${e.victimHandle}`);
+        break;
+      case 'mutual_killed':
+        this.deathMarkers.push({ x: e.x, y: e.y, at: now, victimHandle: e.victimHandle, killerHandle: e.killerHandle });
+        this.pushFeed(`⚠ your mutual @${e.victimHandle} was destroyed by @${e.killerHandle} [${e.cause}]`);
+        break;
+      case 'mutual_capture':
+        this.pushFeed(`🏠 your mutual @${e.byHandle} captured a base`);
         break;
     }
   }

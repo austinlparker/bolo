@@ -44,6 +44,13 @@ DEV_AUTH = "0"
 # Honeycomb dataset for balance telemetry (shot outcomes, kills/TTK).
 HONEYCOMB_DATASET = "atbolo-sim"
 
+# KV namespace for cached Bluesky social data (profiles, relationships).
+# Create with: wrangler kv namespace create SOCIAL_CACHE
+# (then paste the returned id below for production; preview_id for local dev)
+[[kv_namespaces]]
+binding = "SOCIAL_CACHE"
+id = "placeholder-replace-with-wrangler-kv-create-id"
+
 # Secrets (set with `wrangler secret put`):
 #   SESSION_SECRET - HMAC key for session tokens. Required in production.
 #   HONEYCOMB_API_KEY - ingest key for balance telemetry. Optional; telemetry

@@ -139,13 +139,29 @@ async function startPlayer(): Promise<void> {
               sound.play('capture', { volume: e.handle === ear.handle ? 0.9 : 0.4 });
             } else if (e.e === 'base_neutralized') {
               sound.play('bigboom', { volume: 0.5 });
+            } else if (e.e === 'mutual_killed') {
+              sound.play('boom', { volume: 0.6 });
+            } else if (e.e === 'mutual_capture') {
+              sound.play('capture', { volume: 0.5 });
             }
           }
         }
         break;
       }
       case 'chat':
-        hud.addChat(msg);
+        hud.addChat(msg, state);
+        break;
+      case 'social_data':
+        state.applySocialData(msg.profiles);
+        break;
+      case 'mutuals':
+        state.applyMutuals(msg.dids);
+        break;
+      case 'bounty_active':
+        state.applyBountyActive(msg.bounties);
+        break;
+      case 'bounty_claimed':
+        hud.showToast(`💰 BOUNTY CLAIMED: @${msg.claimerHandle} → @${msg.targetHandle} +${msg.reward}`, 4000);
         break;
       case 'emoted':
         state.emotes.set(msg.tankId, { kind: msg.kind, at: performance.now() });
