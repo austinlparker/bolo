@@ -80,8 +80,8 @@ export function generateMap(seed: number): GeneratedMap {
       const elev = sym(elevSeed, elevFreq, x, y, 5) - falloff;
 
       let t: Terrain;
-      if (elev < 0.32) t = Terrain.DeepSea;
-      else if (elev < 0.38) t = Terrain.River; // shallow coastal water
+      if (elev < 0.30) t = Terrain.DeepSea;
+      else if (elev < 0.40) t = Terrain.River; // shallow coastal water (wider band = more crossings)
       else if (elev < 0.42 && sym(swampSeed, 10, x, y, 3) > swampThresh) t = Terrain.Swamp;
       else {
         // winding rivers along noise ridge lines, only on land
