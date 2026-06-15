@@ -107,13 +107,23 @@ const NPC_REACTION_TICKS = Math.round(TICK_HZ * 0.6);
 const NPC_AIM_SPREAD = 0.12; // radians; ~7° max error, resampled at 2Hz
 // After A* fails to reach a goal overland, skip re-selecting it for this long
 // so a cut-off garrison doesn't re-run a full-budget search at the same
-// impossible goal every couple of seconds.
-const NPC_UNREACHABLE_BACKOFF = TICK_HZ * 30;
+// impossible goal every couple of seconds. Kept short (15s) so that
+// budget-exhausted paths retry soon — many "unreachable" results are just
+// the search hitting MAX_EXPANSIONS, not truly impassable terrain.
+const NPC_UNREACHABLE_BACKOFF = TICK_HZ * 15;
 
 // A* scratch buffers, allocated once.
 const N_TILES = MAP_SIZE * MAP_SIZE;
-const MAX_EXPANSIONS = 12000;
-const HEURISTIC_WEIGHT = 1.2;
+/**
+ * Search budget: an unreachable goal would otherwise exhaust all 65k tiles
+ * on every repath. Raised from 12k to 20k after analysis showed ~13% of
+ * generated seeds have base pairs that need >12k expansions (the deep-sea
+ * edge penalty inflates cost gradients, forcing the search to explore
+ * many alternatives before committing to a coastal route).
+ */
+const MAX_EXPANSIONS = 20000;
+/** Weighted A* (h x 1.3): slightly suboptimal routes, far fewer expansions. */
+const HEURISTIC_WEIGHT = 1.3;
 
 const NEIGHBORS = [
   [1, 0], [-1, 0], [0, 1], [0, -1],
@@ -487,14 +497,17 @@ export class NpcController {
   // --- Core A* navigation toward a goal base ---
   private driveToGoal(world: World, tank: Tank, mem: AiMemory, goal: Base, resupplying: boolean): TankInput {
     const goalKey = `base:${goal.id}:${goal.owner}`;
+    const goalD = Math.hypot(goal.x + 0.5 - tank.x, goal.y + 0.5 - tank.y);
     mem.pathAge++;
     const stale = mem.pathAge > TICK_HZ * (8 + (tank.id % 5));
-    if (mem.goalKey !== goalKey || stale || (mem.path.length === 0)) {
+    // Repath when: goal changed, path is stale, or the path ran out but we're
+    // still far from the goal (consumed all waypoints). Don't repath on empty
+    // path when we're close — just drive straight at it.
+    const needsPath = mem.goalKey !== goalKey || stale || (mem.path.length === 0 && goalD > 2);
+    if (needsPath) {
       mem.path = this.findPath(world, tank.x, tank.y, goal.x + 0.5, goal.y + 0.5, tank.onBoat);
       mem.pathAge = 0;
       mem.goalKey = goalKey;
-
-      const goalD = Math.hypot(goal.x + 0.5 - tank.x, goal.y + 0.5 - tank.y);
 
       if (mem.path.length === 0 && goalD > 6) {
         // Goal unreachable overland — check if we should try boat building
@@ -539,19 +552,25 @@ export class NpcController {
 
   // --- Check if the goal is across deep water ---
   private shouldBuildBoat(world: World, tank: Tank, goal: Base): boolean {
-    // Scan the straight-line path for deep-sea tiles
-    const steps = 20;
+    // First check: is there deep water on the straight-line path?
+    const steps = 24;
     const gx = goal.x + 0.5;
     const gy = goal.y + 0.5;
     const dist = Math.hypot(gx - tank.x, gy - tank.y);
-    if (dist > 60) return false; // too far to bother
+    if (dist > 80) return false; // too far to bother
+    let deepWaterOnPath = false;
     for (let i = 1; i <= steps; i++) {
       const fx = tank.x + (gx - tank.x) * (i / steps);
       const fy = tank.y + (gy - tank.y) * (i / steps);
       const t = world.tileAt(fx, fy);
-      if (t === Terrain.DeepSea) return true;
+      if (t === Terrain.DeepSea) { deepWaterOnPath = true; break; }
     }
-    return false;
+    if (!deepWaterOnPath) return false;
+
+    // Deep water is on the path. Now verify there's actually a river tile
+    // nearby to build a boat on (otherwise boat-building is futile).
+    const riverTile = findRiverNearWater(world, tank.x, tank.y, BUILDER_MAX_RANGE);
+    return riverTile !== null;
   }
 
   // --- Start the boat-building sub-goal ---
@@ -567,8 +586,8 @@ export class NpcController {
         }
       }
     } else {
-      // Have enough trees — find a river tile adjacent to deep sea to build the boat
-      const riverTile = findRiverNearDeepSea(world, tank.x, tank.y, BUILDER_MAX_RANGE);
+      // Have enough trees — find a river tile near water to build the boat
+      const riverTile = findRiverNearWater(world, tank.x, tank.y, BUILDER_MAX_RANGE);
       if (riverTile) {
         const err = world.builderOrder(tank.id, 'boat', riverTile[0], riverTile[1]);
         if (!err) {
@@ -587,7 +606,7 @@ export class NpcController {
       if (bg.kind === 'harvest') {
         // Trees harvested. Do we have enough for a boat now?
         if (tank.trees >= COST_BOAT) {
-          const riverTile = findRiverNearDeepSea(world, tank.x, tank.y, BUILDER_MAX_RANGE);
+          const riverTile = findRiverNearWater(world, tank.x, tank.y, BUILDER_MAX_RANGE);
           if (riverTile) {
             const err = world.builderOrder(tank.id, 'boat', riverTile[0], riverTile[1]);
             if (!err) {
@@ -841,7 +860,7 @@ function tileCost(world: World, x: number, y: number, allowDeepSea: boolean): nu
       const ny = y + dy;
       if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
       if ((world.terrain[idx(nx, ny)] as Terrain) === Terrain.DeepSea) {
-        cost += 12; // stay off the sea cliff
+        cost += 4; // mild coastal aversion; steerAndShoot handles physical wall-hugging
         break;
       }
     }
@@ -873,14 +892,21 @@ function findNearestTerrain(
   return null;
 }
 
-/** Find a river tile adjacent to deep sea, within range — for boat building. */
-function findRiverNearDeepSea(
+/**
+ * Find a river tile suitable for boat building, within range. Prefers river
+ * tiles adjacent to deep sea (so the boat opens directly onto open water),
+ * but falls back to any river tile (the tank can navigate through shallow
+ * water to reach deep sea after embarking).
+ */
+function findRiverNearWater(
   world: World, x: number, y: number, maxRange: number,
 ): [number, number] | null {
   const tx = Math.floor(x);
   const ty = Math.floor(y);
   let best: [number, number] | null = null;
   let bestD = Infinity;
+  let fallback: [number, number] | null = null;
+  let fallbackD = Infinity;
   for (let r = 1; r <= maxRange; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
@@ -889,7 +915,9 @@ function findRiverNearDeepSea(
         const ny = ty + dy;
         if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
         if ((world.terrain[idx(nx, ny)] as Terrain) !== Terrain.River) continue;
-        // Check if any neighbor is deep sea
+        const d = Math.hypot(nx + 0.5 - x, ny + 0.5 - y);
+        if (d > maxRange) continue;
+        // Check if any neighbor is deep sea (preferred — direct ocean access)
         let nearSea = false;
         for (const [ddx, ddy] of NEIGHBORS) {
           const sx = nx + ddx;
@@ -901,16 +929,14 @@ function findRiverNearDeepSea(
           }
         }
         if (nearSea) {
-          const d = Math.hypot(nx + 0.5 - x, ny + 0.5 - y);
-          if (d < bestD && d <= maxRange) {
-            bestD = d;
-            best = [nx, ny];
-          }
+          if (d < bestD) { bestD = d; best = [nx, ny]; }
+        } else {
+          if (d < fallbackD) { fallbackD = d; fallback = [nx, ny]; }
         }
       }
     }
   }
-  return best;
+  return best ?? fallback;
 }
 
 /** Find the nearest friendly base to a tank. */
