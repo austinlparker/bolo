@@ -33,6 +33,9 @@ import {
   TERRAIN,
   TICK_HZ,
 } from '@bolo/shared';
+import { angleDelta } from '@bolo/shared';
+import { SpatialIndex } from './spatial-index';
+import { TypedMinHeap } from './typed-heap';
 import {
   BASE_REFUEL_RADIUS,
   BOAT_SPEED,
@@ -61,6 +64,7 @@ type NpcBuilderGoal =
 
 interface AiMemory {
   path: [number, number][]; // tile-center waypoints from A*
+  pathIndex: number; // index into path[] for consumption (avoids O(n) shift)
   pathAge: number; // ticks since computed
   goalKey: string;
   stuckTicks: number;
@@ -128,6 +132,10 @@ const NEIGHBORS = [
   [1, 0], [-1, 0], [0, 1], [0, -1],
 ] as const;
 
+// Squared constants for hot-path distance comparisons (avoids Math.hypot)
+const SHELL_RANGE_SQ = SHELL_RANGE * SHELL_RANGE;
+const SHELL_THREAT_RANGE_SQ = 36; // 6² — shell dodge detection range
+
 // Tactical builder cooldowns (ticks)
 const ROAD_COOLDOWN = TICK_HZ * 4; // 4 seconds between road builds per NPC
 const WALL_COOLDOWN = TICK_HZ * 8;
@@ -151,8 +159,14 @@ export class NpcController {
   private cameFrom = new Int32Array(N_TILES);
   private stamp = new Int32Array(N_TILES);
   private generation = 0;
+  // Typed-array binary heap (zero per-push allocations vs old tuple arrays)
+  private heap = new TypedMinHeap(MAX_EXPANSIONS * 4 + 16);
   // Team awareness, rebuilt each tick by preTick()
   private team: TeamAwareness | null = null;
+  // Spatial index of alive tanks — available for proximity queries.
+  // Currently the shell system uses its own internal grid (built post-physics);
+  // this index is built pre-physics during preTick for NPC awareness queries.
+  private _spatial: SpatialIndex = new SpatialIndex();
 
   /** Top up factions to the minimum population; cull extras when humans show up. */
   balanceNpcs(world: World): void {
@@ -195,8 +209,12 @@ export class NpcController {
       ['dawn', []], ['dusk', []],
     ]);
 
+    // Build spatial index of all alive tanks for O(1) proximity queries
+    this._spatial.clear();
+
     for (const t of world.tanks.values()) {
       if (!t.alive) continue;
+      this._spatial.insert(t);
       // Record friendly position + current goal for spreading
       if (t.npc) {
         const mem = this.memories.get(t.id);
@@ -207,13 +225,17 @@ export class NpcController {
     }
 
     // Detect sieged bases: enemy near a friendly base
+    const siegeRangeSq = (BASE_REFUEL_RADIUS * 8) ** 2;
     for (const b of world.bases) {
       if (b.owner === 'neutral') continue;
       const faction = b.owner as Faction;
+      const bx = b.x + 0.5;
+      const by = b.y + 0.5;
       for (const t of world.tanks.values()) {
         if (!t.alive || t.faction === faction) continue;
-        const d = Math.hypot(t.x - (b.x + 0.5), t.y - (b.y + 0.5));
-        if (d < BASE_REFUEL_RADIUS * 8) { // ~6 tiles — "near the base"
+        const dx = t.x - bx;
+        const dy = t.y - by;
+        if (dx * dx + dy * dy < siegeRangeSq) { // ~6 tiles — "near the base"
           sieged.add(b.id);
           break;
         }
@@ -267,15 +289,19 @@ export class NpcController {
     if (!needSupply) {
       // 1) duel the nearest visible enemy tank in range
       let enemy: Tank | null = null;
-      let enemyD = SHELL_RANGE;
+      let enemyD = SHELL_RANGE_SQ;
       for (const other of world.tanks.values()) {
         if (!other.alive || other.faction === tank.faction) continue;
         if (world.tileAt(other.x, other.y) === Terrain.Forest) continue; // can't see into trees
-        const d = Math.hypot(other.x - tank.x, other.y - tank.y);
+        const dx = other.x - tank.x;
+        const dy = other.y - tank.y;
+        const d = dx * dx + dy * dy;
         // Focus fire bias: prefer enemies a teammate is already engaging
         let effectiveD = d;
         if (this.team?.engagedEnemies.has(other.id)) {
-          effectiveD -= 5; // bias toward focus-fired targets
+          // bias: -5 distance. In squared space, subtract ~(2*d_actual*5 - 25)
+          // but the bias is a heuristic tweak, not precision — just use sqrt here
+          effectiveD = (Math.sqrt(d) - 5) ** 2;
         }
         if (effectiveD < enemyD) {
           enemyD = effectiveD;
@@ -284,7 +310,9 @@ export class NpcController {
       }
       if (enemy) {
         // Use the actual distance for combat, not the biased effective distance
-        const realD = Math.hypot(enemy.x - tank.x, enemy.y - tank.y);
+        const edx = enemy.x - tank.x;
+        const edy = enemy.y - tank.y;
+        const realDsq = edx * edx + edy * edy;
         if (mem.targetId !== enemy.id) {
           mem.targetId = enemy.id;
           mem.targetSince = world.tick;
@@ -295,24 +323,27 @@ export class NpcController {
           mem.aimJitter = (Math.random() * 2 - 1) * NPC_AIM_SPREAD;
         }
         return steerAndShoot(
-          world, tank, enemy.x, enemy.y, realD > 3, acquired && tank.shells > 0, mem.aimJitter,
+          world, tank, enemy.x, enemy.y, realDsq > 9, acquired && tank.shells > 0, mem.aimJitter,
         );
       }
       mem.targetId = -1;
 
       // 2) soften a hostile pillbox from stand-off range
       let pill: Pillbox | null = null;
-      let pillD = SHELL_RANGE;
+      let pillD = SHELL_RANGE_SQ;
       for (const p of world.pills) {
         if (p.inTank || p.hp <= 0 || p.owner === tank.faction) continue;
-        const d = Math.hypot(p.x + 0.5 - tank.x, p.y + 0.5 - tank.y);
+        const dx = p.x + 0.5 - tank.x;
+        const dy = p.y + 0.5 - tank.y;
+        const d = dx * dx + dy * dy;
         if (d < pillD) {
           pillD = d;
           pill = p;
         }
       }
+      const pillDist = Math.sqrt(pillD);
       if (pill && tank.shells > 2) {
-        return steerAndShoot(world, tank, pill.x + 0.5, pill.y + 0.5, pillD > PILL_RANGE * 0.8, true);
+        return steerAndShoot(world, tank, pill.x + 0.5, pill.y + 0.5, pillDist > PILL_RANGE * 0.8, true);
       }
     }
 
@@ -334,8 +365,9 @@ export class NpcController {
       const toUs = Math.atan2(tank.y - s.y, tank.x - s.x);
       const headingDiff = Math.abs(angleDelta(s.dir, toUs));
       if (headingDiff > 0.3) continue; // not aimed at us
-      const d = Math.hypot(s.x - tank.x, s.y - tank.y);
-      if (d > 6) continue; // too far to worry
+      const sdx = s.x - tank.x;
+      const sdy = s.y - tank.y;
+      if (sdx * sdx + sdy * sdy > SHELL_THREAT_RANGE_SQ) continue; // too far to worry
       // Dodge perpendicular to the shell's direction
       const ourOffset = angleDelta(s.dir, Math.atan2(tank.y - s.y, tank.x - s.x));
       dodgeDir = ourOffset > 0 ? 1 : -1; // turn away from the shell line
@@ -349,8 +381,9 @@ export class NpcController {
     let nearbyEnemies = 0;
     for (const other of world.tanks.values()) {
       if (!other.alive || other.id === tank.id) continue;
-      const d = Math.hypot(other.x - tank.x, other.y - tank.y);
-      if (d > SHELL_RANGE) continue;
+      const dx = other.x - tank.x;
+      const dy = other.y - tank.y;
+      if (dx * dx + dy * dy > SHELL_RANGE_SQ) continue;
       if (other.faction === tank.faction) nearbyFriendlies++;
       else nearbyEnemies++;
     }
@@ -393,8 +426,9 @@ export class NpcController {
       if (world.tick - mem.lastWallTick >= WALL_COOLDOWN && tank.trees >= COST_WALL + 2) {
         const friendlyBase = findNearestFriendlyBase(world, tank);
         if (friendlyBase) {
-          const d = Math.hypot(friendlyBase.x + 0.5 - tank.x, friendlyBase.y + 0.5 - tank.y);
-          if (d < 4) {
+          const fdx = friendlyBase.x + 0.5 - tank.x;
+          const fdy = friendlyBase.y + 0.5 - tank.y;
+          if (fdx * fdx + fdy * fdy < 16) { // 4²
             // Try to wall an adjacent tile to the base
             for (const [dx, dy] of NEIGHBORS) {
               const wx = friendlyBase.x + dx;
@@ -417,8 +451,9 @@ export class NpcController {
       if (world.tick - mem.lastMineTick >= MINE_COOLDOWN && tank.mines > 0) {
         const friendlyBase = findNearestFriendlyBase(world, tank);
         if (friendlyBase) {
-          const d = Math.hypot(friendlyBase.x + 0.5 - tank.x, friendlyBase.y + 0.5 - tank.y);
-          if (d < 5) {
+          const fdx = friendlyBase.x + 0.5 - tank.x;
+          const fdy = friendlyBase.y + 0.5 - tank.y;
+          if (fdx * fdx + fdy * fdy < 25) { // 5²
             // Lay a mine on the tile we're on, if it's safe
             const mx = Math.floor(tank.x);
             const my = Math.floor(tank.y);
@@ -457,15 +492,18 @@ export class NpcController {
       if (!resupplying && world.tick < mem.unreachableUntil && mem.unreachableGoalKey === `base:${b.id}:${b.owner}`) {
         continue;
       }
-      const d = Math.hypot(b.x + 0.5 - tank.x, b.y + 0.5 - tank.y);
+      const dx = b.x + 0.5 - tank.x;
+      const dy = b.y + 0.5 - tank.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
       let bias = !resupplying && b.owner !== 'neutral' ? 40 : 0; // prefer free real estate
       // Goal spreading: penalize goals other friendlies are already heading toward
       const goalKey = `base:${b.id}:${b.owner}`;
       const teammates = this.team?.friendlyPositions.get(tank.faction) ?? [];
       for (const f of teammates) {
         if (f.goalKey === goalKey) {
-          const fd = Math.hypot(f.x - (b.x + 0.5), f.y - (b.y + 0.5));
-          if (fd < d) bias += 20; // a teammate is closer to this base
+          const tfx = f.x - (b.x + 0.5);
+          const tfy = f.y - (b.y + 0.5);
+          if (tfx * tfx + tfy * tfy < dx * dx + dy * dy) bias += 20; // a teammate is closer to this base
         }
       }
       if (d + bias < bestScore) {
@@ -476,8 +514,11 @@ export class NpcController {
     if (!goal) return { accel: 0, turn: 0, fire: false };
 
     // bombard an enemy base's fortifications until it falls neutral
-    const goalD = Math.hypot(goal.x + 0.5 - tank.x, goal.y + 0.5 - tank.y);
-    if (!resupplying && goal.owner !== 'neutral' && goal.hp > 0 && goalD < SHELL_RANGE * 0.9) {
+    const gdx = goal.x + 0.5 - tank.x;
+    const gdy = goal.y + 0.5 - tank.y;
+    const goalDsq = gdx * gdx + gdy * gdy;
+    if (!resupplying && goal.owner !== 'neutral' && goal.hp > 0 && goalDsq < (SHELL_RANGE * 0.9) ** 2) {
+      const goalD = Math.sqrt(goalDsq);
       return steerAndShoot(world, tank, goal.x + 0.5, goal.y + 0.5, goalD > 4, tank.shells > 0);
     }
 
@@ -497,14 +538,19 @@ export class NpcController {
   // --- Core A* navigation toward a goal base ---
   private driveToGoal(world: World, tank: Tank, mem: AiMemory, goal: Base, resupplying: boolean): TankInput {
     const goalKey = `base:${goal.id}:${goal.owner}`;
-    const goalD = Math.hypot(goal.x + 0.5 - tank.x, goal.y + 0.5 - tank.y);
+    const gdx = goal.x + 0.5 - tank.x;
+    const gdy = goal.y + 0.5 - tank.y;
+    const goalDsq = gdx * gdx + gdy * gdy;
+    const goalD = Math.sqrt(goalDsq);
     mem.pathAge++;
     const stale = mem.pathAge > TICK_HZ * (8 + (tank.id % 5));
+    const pathRemaining = mem.path.length - mem.pathIndex;
     // Repath when: goal changed, path is stale, or the path ran out but we're
     // still far from the goal. Don't repath on empty path when close.
-    const needsPath = mem.goalKey !== goalKey || stale || (mem.path.length === 0 && goalD > 2);
+    const needsPath = mem.goalKey !== goalKey || stale || (pathRemaining === 0 && goalD > 2);
     if (needsPath) {
       mem.path = this.findPath(world, tank.x, tank.y, goal.x + 0.5, goal.y + 0.5, tank.onBoat);
+      mem.pathIndex = 0;
       mem.pathAge = 0;
       mem.goalKey = goalKey;
 
@@ -532,19 +578,21 @@ export class NpcController {
         mem.unreachableUntil = world.tick + NPC_UNREACHABLE_BACKOFF;
         const ang = Math.random() * Math.PI * 2;
         mem.path = [[tank.x + Math.cos(ang) * 8, tank.y + Math.sin(ang) * 8]];
+        mem.pathIndex = 0;
       } else if (mem.path.length === 0 && goalD > 1.5) {
         mem.path = [[goal.x + 0.5, goal.y + 0.5]];
+        mem.pathIndex = 0;
       }
     }
 
-    let [wx, wy] = mem.path[0] ?? [goal.x + 0.5, goal.y + 0.5];
-    while (mem.path.length > 0 && Math.hypot(wx - tank.x, wy - tank.y) < 1.5) {
-      mem.path.shift();
-      [wx, wy] = mem.path[0] ?? [goal.x + 0.5, goal.y + 0.5];
+    let [wx, wy] = mem.path[mem.pathIndex] ?? [goal.x + 0.5, goal.y + 0.5];
+    while (mem.pathIndex < mem.path.length && (wx - tank.x) ** 2 + (wy - tank.y) ** 2 < 2.25) { // 1.5²
+      mem.pathIndex++;
+      [wx, wy] = mem.path[mem.pathIndex] ?? [goal.x + 0.5, goal.y + 0.5];
     }
 
     // unstick
-    if (Math.hypot(tank.x - mem.lastX, tank.y - mem.lastY) < 0.05) {
+    if ((tank.x - mem.lastX) ** 2 + (tank.y - mem.lastY) ** 2 < 0.0025) { // 0.05²
       mem.stuckTicks++;
       if (mem.stuckTicks > TICK_HZ * 3) {
         // Sample 8 directions; prefer the one that reaches passable (non-water) terrain
@@ -561,6 +609,7 @@ export class NpcController {
         }
         const ang = bestDir ?? Math.random() * Math.PI * 2;
         mem.path = [[tank.x + Math.cos(ang) * 6, tank.y + Math.sin(ang) * 6]];
+        mem.pathIndex = 0;
         mem.goalKey = 'wander';
         mem.pathAge = 0;
         mem.stuckTicks = 0;
@@ -579,7 +628,7 @@ export class NpcController {
     const steps = 24;
     const gx = goal.x + 0.5;
     const gy = goal.y + 0.5;
-    const dist = Math.hypot(gx - tank.x, gy - tank.y);
+    const dist = Math.sqrt((gx - tank.x) ** 2 + (gy - tank.y) ** 2);
     if (dist > 80) return false;
     let consecutiveRiver = 0;
     for (let i = 1; i <= steps; i++) {
@@ -631,7 +680,7 @@ export class NpcController {
         }
         // Navigate toward the nearest water tile.
         const [tx, ty] = bg.targetTile;
-        const d = Math.hypot(tx + 0.5 - tank.x, ty + 0.5 - tank.y);
+        const d = Math.sqrt((tx + 0.5 - tank.x) ** 2 + (ty + 0.5 - tank.y) ** 2);
         if (d <= BUILDER_MAX_RANGE) {
           // Close enough to start building. Do we have enough trees?
           if (tank.trees < COST_BOAT) {
@@ -664,7 +713,7 @@ export class NpcController {
           if (tank.trees >= COST_BOAT) {
             const riverTile = findNearestWater(world, tank.x, tank.y);
             if (riverTile) {
-              const rd = Math.hypot(riverTile[0] + 0.5 - tank.x, riverTile[1] + 0.5 - tank.y);
+              const rd = Math.sqrt((riverTile[0] + 0.5 - tank.x) ** 2 + (riverTile[1] + 0.5 - tank.y) ** 2);
               if (rd <= BUILDER_MAX_RANGE) {
                 this.tryBoatOrder(world, tank, mem, riverTile, bg.finalGoal);
               } else {
@@ -732,13 +781,15 @@ export class NpcController {
   private findSiegedBase(world: World, tank: Tank): Base | null {
     if (!this.team || this.team.siegedBases.size === 0) return null;
     let best: Base | null = null;
-    let bestD = 30; // response radius
+    let bestD = 900; // 30² — response radius
     for (const b of world.bases) {
       if (b.owner !== tank.faction) continue;
       if (!this.team.siegedBases.has(b.id)) continue;
-      const d = Math.hypot(b.x + 0.5 - tank.x, b.y + 0.5 - tank.y);
-      if (d < bestD) {
-        bestD = d;
+      const dx = b.x + 0.5 - tank.x;
+      const dy = b.y + 0.5 - tank.y;
+      const dsq = dx * dx + dy * dy;
+      if (dsq < bestD) {
+        bestD = dsq;
         best = b;
       }
     }
@@ -753,6 +804,7 @@ export class NpcController {
   reset(): void {
     this.memories.clear();
     this.team = null;
+    this._spatial.clear();
   }
 
   private getMemory(tank: Tank): AiMemory {
@@ -760,6 +812,7 @@ export class NpcController {
     if (!mem) {
       mem = {
         path: [],
+        pathIndex: 0,
         pathAge: Infinity,
         goalKey: '',
         stuckTicks: 0,
@@ -802,14 +855,16 @@ export class NpcController {
     const gx = goal % MAP_SIZE;
     const gy = (goal / MAP_SIZE) | 0;
     const heur = (x: number, y: number) => (Math.abs(gx - x) + Math.abs(gy - y)) * HEURISTIC_WEIGHT;
-    const heap: [number, number][] = [[heur(start % MAP_SIZE, (start / MAP_SIZE) | 0), start]];
+    const heap = this.heap;
+    heap.clear();
+    heap.push(heur(start % MAP_SIZE, (start / MAP_SIZE) | 0), start);
     this.gScore[start] = 0;
     this.cameFrom[start] = start;
     this.stamp[start] = this.generation;
     let found = false;
     let expansions = 0;
-    while (heap.length > 0) {
-      const [f, cur] = heapPop(heap);
+    while (!heap.isEmpty()) {
+      const { fScore: f, nodeId: cur } = heap.pop();
       if (cur === goal) {
         found = true;
         break;
@@ -830,7 +885,7 @@ export class NpcController {
           this.stamp[n] = this.generation;
           this.gScore[n] = ng;
           this.cameFrom[n] = cur;
-          heapPush(heap, [ng + heur(nx, ny), n]);
+          heap.push(ng + heur(nx, ny), n);
         }
       }
     }
@@ -962,8 +1017,7 @@ function findNearestTerrain(
         const ny = ty + dy;
         if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
         if ((world.terrain[idx(nx, ny)] as Terrain) === terrain) {
-          const d = Math.hypot(nx + 0.5 - x, ny + 0.5 - y);
-          if (d <= maxRange) return [nx, ny];
+          if ((nx + 0.5 - x) ** 2 + (ny + 0.5 - y) ** 2 <= maxRange * maxRange) return [nx, ny];
         }
       }
     }
@@ -1016,12 +1070,14 @@ function findNearestBoatTile(world: World, x: number, y: number, maxRange: numbe
 /** Find the nearest friendly base to a tank. */
 function findNearestFriendlyBase(world: World, tank: Tank): Base | null {
   let best: Base | null = null;
-  let bestD = Infinity;
+  let bestDsq = Infinity;
   for (const b of world.bases) {
     if (b.owner !== tank.faction) continue;
-    const d = Math.hypot(b.x + 0.5 - tank.x, b.y + 0.5 - tank.y);
-    if (d < bestD) {
-      bestD = d;
+    const dx = b.x + 0.5 - tank.x;
+    const dy = b.y + 0.5 - tank.y;
+    const dsq = dx * dx + dy * dy;
+    if (dsq < bestDsq) {
+      bestDsq = dsq;
       best = b;
     }
   }
@@ -1040,40 +1096,8 @@ function canBuildOn(t: Terrain): boolean {
   );
 }
 
-function heapPush(heap: [number, number][], item: [number, number]): void {
-  heap.push(item);
-  let i = heap.length - 1;
-  while (i > 0) {
-    const parent = (i - 1) >> 1;
-    if (heap[parent][0] <= heap[i][0]) break;
-    [heap[parent], heap[i]] = [heap[i], heap[parent]];
-    i = parent;
-  }
-}
+// The old tuple-array heapPush/heapPop functions have been replaced by
+// the TypedMinHeap class (see typed-heap.ts) which uses parallel typed arrays
+// for zero per-push allocations.
 
-function heapPop(heap: [number, number][]): [number, number] {
-  const top = heap[0];
-  const last = heap.pop()!;
-  if (heap.length > 0) {
-    heap[0] = last;
-    let i = 0;
-    for (;;) {
-      const l = i * 2 + 1;
-      const r = l + 1;
-      let m = i;
-      if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
-      if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
-      if (m === i) break;
-      [heap[m], heap[i]] = [heap[i], heap[m]];
-      i = m;
-    }
-  }
-  return top;
-}
-
-function angleDelta(from: number, to: number): number {
-  let d = to - from;
-  while (d > Math.PI) d -= 2 * Math.PI;
-  while (d < -Math.PI) d += 2 * Math.PI;
-  return d;
-}
+// angleDelta is now imported from @bolo/shared (deduplicated from math.ts)

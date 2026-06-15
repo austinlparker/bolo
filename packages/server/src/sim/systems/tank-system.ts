@@ -20,6 +20,7 @@ import type { WorldHost } from '../world-host';
 import { clamp } from '../utils';
 
 const W = MAP_SIZE;
+const TANK_RADIUS_SQ = TANK_RADIUS * TANK_RADIUS;
 
 /** Tread corner sample points for the road-shoulder speed check. */
 const TREAD_OFFSETS: [number, number][] = [
@@ -143,7 +144,9 @@ export class TankSystem {
       const b = other.builder;
       if (other.faction === tank.faction) continue;
       if (b.phase === 'outbound' || b.phase === 'working' || b.phase === 'returning') {
-        if (Math.hypot(b.x - tank.x, b.y - tank.y) < TANK_RADIUS) {
+        const bdx = b.x - tank.x;
+        const bdy = b.y - tank.y;
+        if (bdx * bdx + bdy * bdy < TANK_RADIUS_SQ) {
           this.host.killBuilder(other);
         }
       }

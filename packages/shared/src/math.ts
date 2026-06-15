@@ -2,10 +2,7 @@
 
 /** Smallest signed rotation from `from` to `to`, in (-PI, PI]. */
 export function angleDelta(from: number, to: number): number {
-  let d = to - from;
-  while (d > Math.PI) d -= 2 * Math.PI;
-  while (d < -Math.PI) d += 2 * Math.PI;
-  return d;
+  return Math.atan2(Math.sin(to - from), Math.cos(to - from));
 }
 
 /** Round to 2 decimal places (wire-size trim for positions/angles). */

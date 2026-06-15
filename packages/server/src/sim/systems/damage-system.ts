@@ -78,7 +78,7 @@ export class DamageSystem {
         this.damageTank(tank, MINE_DAMAGE, 'mine', null);
       }
       const b = tank.builder;
-      if (b.phase !== 'in_tank' && b.phase !== 'dead' && Math.hypot(b.x - (x + 0.5), b.y - (y + 0.5)) < 1) {
+      if (b.phase !== 'in_tank' && b.phase !== 'dead' && (b.x - (x + 0.5)) ** 2 + (b.y - (y + 0.5)) ** 2 < 1) {
         this.host.killBuilder(tank);
       }
     }
