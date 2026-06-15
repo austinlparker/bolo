@@ -23,6 +23,10 @@ import {
   TANK_TURN_RATE,
   TANK_TURN_ACCEL,
   TANK_REVERSE_FACTOR,
+  Terrain,
+  TERRAIN,
+  BOAT_SPEED,
+  TANK_RADIUS,
   type WarInfo,
   type WelcomeMsg,
 } from '@bolo/shared';
@@ -295,8 +299,9 @@ export class GameState {
     if (p.dir > Math.PI) p.dir -= 2 * Math.PI;
     else if (p.dir < -Math.PI) p.dir += 2 * Math.PI;
 
-    // --- speed: accel toward target speed fraction (ignores terrain) ---
-    const maxSpeed = TANK_MAX_SPEED;
+    // --- speed: accel toward target speed fraction (terrain-aware) ---
+    const onBoat = false; // client prediction doesn't model boat state transitions
+    const maxSpeed = this.terrainMaxSpeed(p.x, p.y, onBoat);
     const target = input.accel >= 0
       ? input.accel * maxSpeed
       : input.accel * maxSpeed * TANK_REVERSE_FACTOR;
@@ -315,6 +320,35 @@ export class GameState {
   }
 
   /**
+   * Terrain-aware max speed, replicating the server's tank-system.ts model.
+   * Samples the tile under the tank and checks tread corners for road shoulders.
+   * Returns 0 for impassable terrain (building, deep sea off-boat).
+   */
+  private terrainMaxSpeed(x: number, y: number, onBoat: boolean): number {
+    const xi = Math.floor(x);
+    const yi = Math.floor(y);
+    if (xi < 0 || yi < 0 || xi >= MAP_SIZE || yi >= MAP_SIZE) return TANK_MAX_SPEED;
+    const here = this.terrain[yi * MAP_SIZE + xi] as Terrain;
+    const onWater = here === Terrain.DeepSea || here === Terrain.River || here === Terrain.BoatTile;
+    if (onBoat && onWater) return BOAT_SPEED;
+    let terrainSpeed = TERRAIN[here].tankSpeed;
+    if (terrainSpeed > 0 && here !== Terrain.Road) {
+      const r = TANK_RADIUS * 0.9;
+      for (const [ox, oy] of [[r, r], [r, -r], [-r, r], [-r, -r]]) {
+        const txi = Math.floor(x + ox);
+        const tyi = Math.floor(y + oy);
+        if (txi >= 0 && tyi >= 0 && txi < MAP_SIZE && tyi < MAP_SIZE) {
+          if ((this.terrain[tyi * MAP_SIZE + txi] as Terrain) === Terrain.Road) {
+            terrainSpeed = 1.0;
+            break;
+          }
+        }
+      }
+    }
+    return TANK_MAX_SPEED * terrainSpeed;
+  }
+
+  /**
    * Reconcile prediction with authoritative server state: snap to the
    * server position when a new snapshot arrives for our own tank. The
    * prediction continues forward from there on the next frame.
@@ -327,7 +361,7 @@ export class GameState {
     const dx = tv.x - this.pred.x;
     const dy = tv.y - this.pred.y;
     const drift = Math.hypot(dx, dy);
-    if (drift > 0.5) {
+    if (drift > 0.75) {
       // large correction: snap hard
       this.pred.x = tv.x;
       this.pred.y = tv.y;
@@ -335,7 +369,7 @@ export class GameState {
       this.pred.speed = tv.speed;
     } else {
       // small drift: blend toward server (absorb smoothly over ~2 frames)
-      const blend = 0.3;
+      const blend = 0.5;
       this.pred.x += dx * blend;
       this.pred.y += dy * blend;
       // angle: take the shorter way
