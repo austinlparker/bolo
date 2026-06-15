@@ -42,19 +42,22 @@ export class PillSystem {
 
       // neutral pillboxes hate everyone; owned ones hate the other faction
       let target: Tank | null = null;
-      let bestD = PILL_RANGE;
+      let bestDsq = PILL_RANGE * PILL_RANGE;
       for (const tank of tanks.values()) {
         if (!tank.alive) continue;
         if (pill.owner !== 'neutral' && tank.faction === pill.owner) continue;
         // hidden in forest = safe from pillboxes too
         if (this.host.tileAt(tank.x, tank.y) === Terrain.Forest) continue;
-        const d = Math.hypot(tank.x - (pill.x + 0.5), tank.y - (pill.y + 0.5));
-        if (d < bestD) {
-          bestD = d;
+        const tdx = tank.x - (pill.x + 0.5);
+        const tdy = tank.y - (pill.y + 0.5);
+        const dsq = tdx * tdx + tdy * tdy;
+        if (dsq < bestDsq) {
+          bestDsq = dsq;
           target = tank;
         }
       }
       if (target) {
+        const bestD = Math.sqrt(bestDsq);
         const px = pill.x + 0.5;
         const py = pill.y + 0.5;
         // simple leading: aim at where the target will be in flight-time
