@@ -556,6 +556,15 @@ export class NpcController {
       const dy = b.y + 0.5 - tank.y;
       const d = Math.sqrt(dx * dx + dy * dy);
       let bias = !resupplying && b.owner !== 'neutral' ? 40 : 0; // prefer free real estate
+      // Supply check: when resupplying, prefer bases that actually have stock.
+      // A depleted base (0 shells + 0 armor) can only trickle-supply (~1-3
+      // units per 2s), so an NPC that picks the nearest depleted base camps
+      // there uselessly while a fully-stocked base sits a few tiles further.
+      if (resupplying) {
+        const stock = b.shellStock + b.armorStock;
+        if (stock === 0) bias += 50; // nothing to give — strong penalty
+        else if (stock < 15) bias += 20; // nearly tapped — deprioritize
+      }
       // Siege persistence: strongly prefer returning to a base we've already
       // damaged so we finish it off instead of spreading fire across many bases.
       if (!resupplying && mem.siegeTargetId === b.id) bias -= 80;
