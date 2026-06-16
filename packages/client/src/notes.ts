@@ -18,7 +18,7 @@ export const BULLETINS: Bulletin[] = [
   {
     id: 3,
     date: '2026-06-16',
-    title: 'THE HEADING DISPATCHES',
+    title: 'THE SOCIAL DISPATCHES',
     items: [
       'turning is fixed. the old model had two ramps fighting each other — your client ramped one way, the server ramped another, and the mismatch made your tank drift after you let go. now your client owns the heading outright and tells the server where you\'re pointed. tap to nudge, hold to swing, release to stop dead. no overshoot, no drift, no fighting.',
       'your tank reacts the instant you touch a control. the client predicts your movement locally and reconciles with the server behind the scenes — no more waiting a tenth of a second for the round-trip before your hull starts moving.',
