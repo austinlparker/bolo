@@ -387,21 +387,21 @@ export class Renderer {
 
     // label with backing
     const label = (t.npc ? '⚙ ' : '') + t.handle;
-    ctx.font = '10px monospace';
+    ctx.font = '12px monospace';
     ctx.textAlign = 'center';
     const tw = ctx.measureText(label).width;
     // avatar lookup (skip NPCs — no Bluesky profile)
     const avUrl = !t.npc && t.did ? state.socialProfiles[t.did]?.avatar : undefined;
     const avImg = avUrl ? this.avatarImg(avUrl) : null;
-    const avSize = 10;
-    const avW = avImg ? avSize + 3 : 0;
+    const avSize = 14;
+    const avW = avImg ? avSize + 4 : 0;
     const totalW = tw + avW;
     ctx.fillStyle = 'rgba(7,8,12,0.55)';
-    ctx.fillRect(px - totalW / 2 - 3, py - r - 14, totalW + 6, 11);
+    ctx.fillRect(px - totalW / 2 - 4, py - r - 18, totalW + 8, 15);
     // avatar as a small circle to the left of the handle
     if (avImg) {
       const avCx = px - totalW / 2 + avSize / 2;
-      const avCy = py - r - 8.5;
+      const avCy = py - r - 10.5;
       ctx.save();
       ctx.beginPath();
       ctx.arc(avCx, avCy, avSize / 2, 0, Math.PI * 2);
@@ -411,13 +411,13 @@ export class Renderer {
       ctx.restore();
     }
     ctx.fillStyle = isMe ? '#ffffff' : body;
-    ctx.fillText(label, px + avW / 2, py - r - 5.5);
+    ctx.fillText(label, px + avW / 2, py - r - 7);
 
     // mutual marker: small green dot above mutual tanks
     if (t.mutual) {
       ctx.fillStyle = '#6c8';
       ctx.beginPath();
-      ctx.arc(px + totalW / 2 + 6, py - r - 9, 3, 0, Math.PI * 2);
+      ctx.arc(px + totalW / 2 + 6, py - r - 10.5, 3, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -426,7 +426,7 @@ export class Renderer {
       ctx.save();
       ctx.fillStyle = '#e8c75d';
       ctx.beginPath();
-      ctx.arc(px - totalW / 2 - 8, py - r - 9, 5, 0, Math.PI * 2);
+      ctx.arc(px - totalW / 2 - 8, py - r - 10.5, 5, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = '#a06b1c';
       ctx.lineWidth = 1.5;
@@ -435,7 +435,7 @@ export class Renderer {
       ctx.font = 'bold 8px monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('$', px - totalW / 2 - 8, py - r - 9);
+      ctx.fillText('$', px - totalW / 2 - 8, py - r - 10.5);
       ctx.restore();
     }
 

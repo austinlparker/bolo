@@ -471,17 +471,28 @@ export class NpcController {
           const fdx = friendlyBase.x + 0.5 - tank.x;
           const fdy = friendlyBase.y + 0.5 - tank.y;
           if (fdx * fdx + fdy * fdy < 16) { // 4²
-            // Try to wall an adjacent tile to the base
+            // Count blocked exits to avoid walling the base shut — tanks
+            // spawn here and need at least 2 open sides to escape.
+            let blockedExits = 0;
             for (const [dx, dy] of NEIGHBORS) {
-              const wx = friendlyBase.x + dx;
-              const wy = friendlyBase.y + dy;
-              if (wx < 0 || wy < 0 || wx >= MAP_SIZE || wy >= MAP_SIZE) continue;
-              const wt = world.terrain[idx(wx, wy)] as Terrain;
-              if (canBuildOn(wt)) {
-                const err = world.builderOrder(tank.id, 'wall', wx, wy);
-                if (!err) {
-                  mem.lastWallTick = world.tick;
-                  break;
+              const nx = friendlyBase.x + dx;
+              const ny = friendlyBase.y + dy;
+              if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) { blockedExits++; continue; }
+              if ((world.terrain[idx(nx, ny)] as Terrain) === Terrain.Building) blockedExits++;
+            }
+            // Only wall if at least 2 exits will remain open
+            if (blockedExits < 2) {
+              for (const [dx, dy] of NEIGHBORS) {
+                const wx = friendlyBase.x + dx;
+                const wy = friendlyBase.y + dy;
+                if (wx < 0 || wy < 0 || wx >= MAP_SIZE || wy >= MAP_SIZE) continue;
+                const wt = world.terrain[idx(wx, wy)] as Terrain;
+                if (canBuildOn(wt)) {
+                  const err = world.builderOrder(tank.id, 'wall', wx, wy);
+                  if (!err) {
+                    mem.lastWallTick = world.tick;
+                    break;
+                  }
                 }
               }
             }
