@@ -99,6 +99,17 @@ interface AiMemory {
    *  returns to finish a damaged base instead of picking a fresh one */
   siegeTargetId: number;
   siegeTargetHp: number;
+  /** tick the current boat sub-goal began (NPC_BOAT_GOAL_TIMEOUT) */
+  builderGoalStart: number;
+  /** consecutive overland-path failures for the current goal (escalates backoff) */
+  pathFailCount: number;
+  /** tick of the most recent offensive action (attack/bombard / in enemy territory) */
+  lastOffenseTick: number;
+  /** telemetry: position at last npc_state emit, for real distance-traveled */
+  lastEmitX: number;
+  lastEmitY: number;
+  /** telemetry: coarse outcome of the most recent decision transition */
+  lastOutcome: string;
 }
 
 // --- Team awareness context ---
@@ -122,6 +133,24 @@ const NPC_AIM_SPREAD = 0.22; // radians; ~12.6° max error, resampled at 2Hz
 // Kept short (15s) so budget-exhausted paths retry soon — many "unreachable"
 // results are the search hitting MAX_EXPANSIONS, not truly impassable terrain.
 const NPC_UNREACHABLE_BACKOFF = TICK_HZ * 15;
+// Humans are far less accurate than garrison bots (telemetry: ~10% tank-hit
+// rate vs the bots' ~40%, and bots killed humans ~4.6:1). When the locked duel
+// target is a human, widen the aim spread and add extra reaction time so the
+// bots are merely worse shots against slippery players — not apex predators.
+// NPC-vs-NPC combat is untouched.
+const NPC_AIM_SPREAD_HUMAN = 0.5; // ~28.6° max error vs humans (vs 12.6° vs bots)
+const NPC_REACTION_TICKS_HUMAN = Math.round(TICK_HZ * 1.4); // 1.4s acquire vs humans
+// Boat-building sub-goal: if it can't complete a crossing in this long, give up
+// and back off the goal. Before this, an NPC whose A* couldn't reach a base
+// would re-enter the boat sub-goal every tick and spin forever — telemetry
+// showed ~60% of all builder cycles lost to a handful of unreachable bases.
+const NPC_BOAT_GOAL_TIMEOUT = TICK_HZ * 30;
+// Stop attempting boats for a goal after this many failures; just back off.
+const NPC_MAX_BOAT_ATTEMPTS = 2;
+// Anti-camp: an NPC that has loitered near a friendly base this long without
+// pushing onto offense is forced to attack instead of defend. Breaks the turtle
+// meta (one faction won 75% of wars by camping + dueling near home).
+const NPC_EXPEDITION_TICKS = TICK_HZ * 25;
 
 // A* scratch buffers, allocated once.
 const N_TILES = MAP_SIZE * MAP_SIZE;
@@ -352,10 +381,13 @@ export class NpcController {
           mem.targetId = enemy.id;
           mem.targetSince = world.tick;
         }
-        const acquired = world.tick - mem.targetSince >= NPC_REACTION_TICKS;
+        const human = !enemy.npc;
+        const reactTicks = human ? NPC_REACTION_TICKS_HUMAN : NPC_REACTION_TICKS;
+        const acquired = world.tick - mem.targetSince >= reactTicks;
         if (world.tick - mem.aimJitterTick >= TICK_HZ / 2) {
           mem.aimJitterTick = world.tick;
-          mem.aimJitter = (Math.random() * 2 - 1) * NPC_AIM_SPREAD;
+          const spread = human ? NPC_AIM_SPREAD_HUMAN : NPC_AIM_SPREAD;
+          mem.aimJitter = (Math.random() * 2 - 1) * spread;
         }
         mem.decision = 'duel';
         return steerAndShoot(
@@ -534,8 +566,15 @@ export class NpcController {
     const haveHomeBase = world.bases.some((b) => b.owner === tank.faction);
     const resupplying = needSupply && haveHomeBase;
 
+    // Anti-camp: an NPC that has loitered near home without pushing offense is
+    // forced to attack instead of being pulled back to defend. Breaks the turtle
+    // meta where one faction won 75% of wars by camping + dueling near its bases.
+    const camped = !resupplying
+      && world.tick - mem.lastOffenseTick > NPC_EXPEDITION_TICKS
+      && this.isNearFriendlyBase(world, tank);
+
     // --- Base defense: redirect to a sieged friendly base ---
-    if (this.team && !resupplying) {
+    if (this.team && !resupplying && !camped) {
       const defended = this.findSiegedBase(world, tank);
       if (defended) {
         mem.decision = 'defend';
@@ -593,16 +632,29 @@ export class NpcController {
       const goalD = Math.sqrt(goalDsq);
       mem.siegeTargetId = goal.id; // remember across resupply trips
       mem.decision = 'bombard';
+      mem.lastOffenseTick = world.tick;
       return steerAndShoot(world, tank, goal.x + 0.5, goal.y + 0.5, goalD > 4, tank.shells > 0);
     }
 
     // --- Boat building sub-goal state machine ---
     if (!tank.onBoat && mem.builderGoal.kind !== 'none') {
-      mem.decision = 'builder';
-      return this.handleBuilderGoal(world, tank, mem);
+      // Give up on a boat crossing that's taking too long — the base is
+      // effectively unreachable and we're wasting cycles. Escalate the backoff
+      // so we don't immediately re-enter the same doomed attempt.
+      if (world.tick - mem.builderGoalStart > NPC_BOAT_GOAL_TIMEOUT) {
+        mem.builderGoal = { kind: 'none' };
+        mem.pathFailCount = Math.min(8, mem.pathFailCount + 1);
+        mem.unreachableGoalKey = mem.goalKey;
+        mem.unreachableUntil = world.tick + NPC_UNREACHABLE_BACKOFF * mem.pathFailCount;
+        mem.lastOutcome = 'boat_timeout';
+      } else {
+        mem.decision = 'builder';
+        return this.handleBuilderGoal(world, tank, mem);
+      }
     }
 
     mem.decision = resupplying ? 'resupply' : 'attack';
+    if (!resupplying) mem.lastOffenseTick = world.tick;
     return this.driveToGoal(world, tank, mem, goal, resupplying);
   }
 
@@ -630,9 +682,16 @@ export class NpcController {
       mem.pathAge = 0;
       mem.goalKey = goalKey;
 
-      if (mem.path.length === 0 && goalD > 6) {
-        // Goal unreachable overland. Before building a new boat, check if
-        // there's an existing BoatTile within reach — reuse it instead.
+      if (mem.path.length > 0) {
+        // Reachable — clear the consecutive-failure counter.
+        mem.pathFailCount = 0;
+        mem.lastOutcome = 'ok';
+      } else if (goalD > 6) {
+        // Goal unreachable overland. Escalate the backoff with each consecutive
+        // failure so we stop hammering a base we can't reach — telemetry showed
+        // ~60% of builder cycles lost to a handful of permanently-unreachable
+        // bases. Before backing off, reuse an existing BoatTile or, for the
+        // first few failures, try building a boat toward the goal.
         if (!tank.onBoat && !resupplying) {
           const existingBoat = findNearestBoatTile(world, tank.x, tank.y, 60);
           if (existingBoat) {
@@ -641,21 +700,23 @@ export class NpcController {
               targetTile: existingBoat,
               finalGoal: [goal.x, goal.y],
             };
+            mem.builderGoalStart = world.tick;
             return { accel: 0, turn: 0, fire: false };
           }
-          // No existing boat — check if we should build one
-          if (this.shouldBuildBoat(world, tank, goal)) {
+          if (mem.pathFailCount < NPC_MAX_BOAT_ATTEMPTS && this.shouldBuildBoat(world, tank, goal)) {
             this.startBoatGoal(world, tank, mem, goal);
             return { accel: 0, turn: 0, fire: false };
           }
         }
-        // Standard backoff
+        // Escalated backoff: grows with consecutive failures (15s, 30s, 45s…)
+        mem.pathFailCount = Math.min(8, mem.pathFailCount + 1);
         mem.unreachableGoalKey = goalKey;
-        mem.unreachableUntil = world.tick + NPC_UNREACHABLE_BACKOFF;
+        mem.unreachableUntil = world.tick + NPC_UNREACHABLE_BACKOFF * mem.pathFailCount;
+        mem.lastOutcome = 'path_failed';
         const ang = Math.random() * Math.PI * 2;
         mem.path = [[tank.x + Math.cos(ang) * 8, tank.y + Math.sin(ang) * 8]];
         mem.pathIndex = 0;
-      } else if (mem.path.length === 0 && goalD > 1.5) {
+      } else if (goalD > 1.5) {
         mem.path = [[goal.x + 0.5, goal.y + 0.5]];
         mem.pathIndex = 0;
       }
@@ -724,15 +785,19 @@ export class NpcController {
 
   // --- Start the boat-building sub-goal ---
   private startBoatGoal(world: World, tank: Tank, mem: AiMemory, goal: Base): void {
-    // Find the nearest water tile on the entire map — the NPC navigates
-    // toward it, then builds the boat when within BUILDER_MAX_RANGE.
-    const riverTile = findNearestWater(world, tank.x, tank.y);
+    // Find the first water tile along the line to the goal. The old code did a
+    // full-map spiral (findNearestWater) which sent the NPC to irrelevant
+    // coastline on the far side of the island — a major source of wasted
+    // builder cycles. We only build a boat to cross water that's actually
+    // between us and our objective.
+    const riverTile = findWaterTowardGoal(world, tank.x, tank.y, goal.x + 0.5, goal.y + 0.5);
     if (!riverTile) return;
     mem.builderGoal = {
       kind: 'goto_coast',
       targetTile: riverTile,
       finalGoal: [goal.x, goal.y],
     };
+    mem.builderGoalStart = world.tick;
   }
 
   // --- Handle the builder sub-goal state machine ---
@@ -787,7 +852,8 @@ export class NpcController {
       case 'harvest': {
         if (tank.builder.phase === 'in_tank') {
           if (tank.trees >= COST_BOAT) {
-            const riverTile = findNearestWater(world, tank.x, tank.y);
+            const [fgx, fgy] = bg.finalGoal;
+            const riverTile = findWaterTowardGoal(world, tank.x, tank.y, fgx + 0.5, fgy + 0.5);
             if (riverTile) {
               const rd = Math.sqrt((riverTile[0] + 0.5 - tank.x) ** 2 + (riverTile[1] + 0.5 - tank.y) ** 2);
               if (rd <= BUILDER_MAX_RANGE) {
@@ -851,6 +917,17 @@ export class NpcController {
     } else {
       mem.builderGoal = { kind: 'none' };
     }
+  }
+
+  /** Is the tank within ~20 tiles of a friendly base (i.e. loitering "at home")? */
+  private isNearFriendlyBase(world: World, tank: Tank): boolean {
+    for (const b of world.bases) {
+      if (b.owner !== tank.faction) continue;
+      const dx = b.x + 0.5 - tank.x;
+      const dy = b.y + 0.5 - tank.y;
+      if (dx * dx + dy * dy < 400) return true; // 20²
+    }
+    return false;
   }
 
   // --- Find a sieged friendly base to defend ---
@@ -922,6 +999,12 @@ export class NpcController {
         if (dx * dx + dy * dy <= refuelRsq) { atFriendlyBase = true; break; }
       }
 
+      // Distance actually traveled since the last emit — was always 0 before,
+      // which made it impossible to tell moving NPCs from stuck ones.
+      const travel = Math.round(
+        Math.hypot(tank.x - mem.lastEmitX, tank.y - mem.lastEmitY) * 10,
+      ) / 10;
+
       this.npcStats.push({
         name: 'npc_state',
         faction: tank.faction,
@@ -935,7 +1018,14 @@ export class NpcController {
         on_boat: tank.onBoat,
         stuck: mem.stuckTicks > TICK_HZ * 2,
         path_failed: mem.path.length === 0 && mem.goalKey.startsWith('base:'),
+        outcome: mem.lastOutcome || 'ok',
+        travel_tiles: travel,
+        kills: tank.kills,
+        caps: tank.caps,
       });
+      mem.lastEmitX = tank.x;
+      mem.lastEmitY = tank.y;
+      mem.lastOutcome = 'ok'; // emitted; start fresh next interval
     }
   }
 
@@ -974,6 +1064,12 @@ export class NpcController {
         decision: '',
         siegeTargetId: -1,
         siegeTargetHp: 0,
+        builderGoalStart: 0,
+        pathFailCount: 0,
+        lastOffenseTick: 0,
+        lastEmitX: tank.x,
+        lastEmitY: tank.y,
+        lastOutcome: 'ok',
       };
       this.memories.set(tank.id, mem);
     }
@@ -1169,25 +1265,25 @@ function findNearestTerrain(
 }
 
 /**
- * Find the nearest water tile (River or BoatTile) on the entire map.
- * Used when a tank needs to reach the coast for boat building but may
- * be deep inland. Only runs when A* already failed (once per backoff).
+ * Find the first River/BoatTile along the straight line from (x0,y0) toward the
+ * goal. Used to pick a boat-building spot that's actually on the route, instead
+ * of the nearest water anywhere on the map (which used to send NPCs across the
+ * island to irrelevant coastline). Returns null if no water lies on the direct
+ * path — the caller then treats the goal as unreachable and backs off.
  */
-function findNearestWater(world: World, x: number, y: number): [number, number] | null {
-  const tx = Math.floor(x);
-  const ty = Math.floor(y);
-  const maxR = Math.max(tx, ty, MAP_SIZE - tx, MAP_SIZE - ty);
-  for (let r = 1; r <= maxR; r++) {
-    for (let dy = -r; dy <= r; dy++) {
-      for (let dx = -r; dx <= r; dx++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) < r - 1) continue;
-        const nx = tx + dx;
-        const ny = ty + dy;
-        if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
-        const t = world.terrain[idx(nx, ny)] as Terrain;
-        if (t === Terrain.River || t === Terrain.BoatTile) return [nx, ny];
-      }
-    }
+function findWaterTowardGoal(
+  world: World, x0: number, y0: number, gx: number, gy: number,
+): [number, number] | null {
+  const dist = Math.hypot(gx - x0, gy - y0);
+  const steps = Math.max(2, Math.ceil(dist));
+  for (let i = 1; i <= steps; i++) {
+    const fx = x0 + (gx - x0) * (i / steps);
+    const fy = y0 + (gy - y0) * (i / steps);
+    const tx = Math.floor(fx);
+    const ty = Math.floor(fy);
+    if (tx < 0 || ty < 0 || tx >= MAP_SIZE || ty >= MAP_SIZE) continue;
+    const t = world.terrain[idx(tx, ty)] as Terrain;
+    if (t === Terrain.River || t === Terrain.BoatTile) return [tx, ty];
   }
   return null;
 }

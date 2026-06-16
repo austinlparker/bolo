@@ -88,10 +88,10 @@ describe('NPC AI – duel targeting', () => {
     const world = new World(1, 0xb010);
     const me = npcAt(world, 50, 50, 'dawn');
     me.dir = 0; // facing east already
-    const enemy = tankAt(world, 52, 50, 'dusk');
+    const enemy = tankAt(world, 52, 50, 'dusk', true); // NPC enemy (baseline bot-vs-bot)
 
     const npc = new NpcController();
-    // Tick enough times to pass reaction delay (~6 ticks at 10Hz)
+    // Tick enough times to pass the bot-vs-bot reaction delay (~9 ticks at 10Hz)
     let input: TankInput = { accel: 0, turn: 0, fire: false };
     for (let i = 0; i < 10; i++) {
       world.tick++;
@@ -100,6 +100,34 @@ describe('NPC AI – duel targeting', () => {
     }
     // Should be firing now that we've had the target long enough
     expect(input.fire).toBe(true);
+  });
+
+  it('reacts more slowly to human targets than to bots', () => {
+    const world = new World(1, 0xb010);
+    const me = npcAt(world, 50, 50, 'dawn');
+    me.dir = 0; // facing east already
+    tankAt(world, 52, 50, 'dusk'); // human enemy (npc defaults to false)
+
+    const npc = new NpcController();
+    let input: TankInput = { accel: 0, turn: 0, fire: false };
+    // 10 ticks clears the bot-vs-bot delay (~9) but is short of the longer
+    // human-target delay (~14): the garrison should hold its fire vs a player.
+    for (let i = 0; i < 10; i++) {
+      world.tick++;
+      npc.preTick(world);
+      input = npc.think(world, me);
+    }
+    expect(input.fire).toBe(false);
+    // Past the human-target delay now — it opens up within a few ticks. (Fire
+    // is also gated on facing, so allow a small window rather than one tick.)
+    let fired = false;
+    for (let i = 0; i < 8; i++) {
+      world.tick++;
+      npc.preTick(world);
+      input = npc.think(world, me);
+      if (input.fire) { fired = true; break; }
+    }
+    expect(fired).toBe(true);
   });
 
   it('ignores enemies hidden in forest at range', () => {

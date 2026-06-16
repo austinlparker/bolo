@@ -129,6 +129,14 @@ export interface NpcStateStat {
   on_boat: boolean;
   stuck: boolean;
   path_failed: boolean;
+  /** coarse outcome of the most recent decision transition this interval:
+   *  'ok' | 'path_failed' | 'boat_timeout' */
+  outcome?: string;
+  /** tiles actually traveled since the previous npc_state emit */
+  travel_tiles?: number;
+  /** this NPC's lifetime kills / captures (per-NPC scoreboard) */
+  kills?: number;
+  caps?: number;
 }
 
 export type StatEvent = ShotStat | KillStat | BaseCaptureStat | WarStat | NpcStateStat;
