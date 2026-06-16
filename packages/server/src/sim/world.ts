@@ -114,7 +114,22 @@ export interface WarStat {
   total_captures: number;
 }
 
-export type StatEvent = ShotStat | KillStat | BaseCaptureStat | WarStat;
+export interface NpcStateStat {
+  name: 'npc_state';
+  faction: string;
+  decision: string;
+  goal_key?: string;
+  goal_owner?: string;
+  dist_to_goal?: number;
+  shells: number;
+  armor: number;
+  at_friendly_base: boolean;
+  on_boat: boolean;
+  stuck: boolean;
+  path_failed: boolean;
+}
+
+export type StatEvent = ShotStat | KillStat | BaseCaptureStat | WarStat | NpcStateStat;
 
 const W = MAP_SIZE;
 
