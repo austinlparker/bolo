@@ -56,7 +56,7 @@ export default {
     if (url.pathname === '/api/regenerate') {
       const auth = request.headers.get('Authorization');
       const token = url.searchParams.get('token');
-      if (auth !== `Bearer ${env.SESSION_SECRET}` && token !== env.SESSION_SECRET) {
+      if (auth !== `Bearer ${env.ADMIN_SECRET}` && token !== env.ADMIN_SECRET) {
         return json({ error: 'unauthorized' }, 403);
       }
       const res = await world().fetch(new Request(new URL('/regenerate', url.origin)));

@@ -7,6 +7,8 @@ export interface Env {
   DEV_AUTH: string;
   /** HMAC key for session tokens; set via `wrangler secret put SESSION_SECRET` */
   SESSION_SECRET?: string;
+  /** Admin key for debug endpoints (/api/regenerate); set via `wrangler secret put ADMIN_SECRET` */
+  ADMIN_SECRET?: string;
   /** Honeycomb ingest key for balance telemetry; unset = telemetry disabled */
   HONEYCOMB_API_KEY?: string;
   /** Honeycomb dataset for balance telemetry (default "atbolo-sim") */
