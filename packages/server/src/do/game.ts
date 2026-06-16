@@ -169,18 +169,28 @@ export class GameDO implements DurableObject {
       // the persistent profile stats. foldStats only runs on disconnect or
       // war end, so without this the leaderboard is stale for connected
       // players — their current-session performance wouldn't show up.
-      const liveStats = new Map<string, { kills: number; deaths: number; caps: number }>();
+      const liveStats = new Map<string, Record<string, number>>();
       for (const session of this.store) {
         if (session.role !== 'player' || session.tankId === undefined || !session.did) continue;
         const tank = world.tanks.get(session.tankId);
-        if (tank) liveStats.set(session.did, { kills: tank.kills, deaths: tank.deaths, caps: tank.caps });
+        if (tank) {
+          liveStats.set(session.did, {
+            kills: tank.kills, deaths: tank.deaths, caps: tank.caps,
+            bountyKills: tank.bountyKills, revengeKills: tank.revengeKills, paybackKills: tank.paybackKills,
+            treesChopped: tank.treesChopped, roadsBuilt: tank.roadsBuilt, wallsBuilt: tank.wallsBuilt, pillsBuilt: tank.pillsBuilt,
+          });
+        }
       }
+
+      const mergeKeys = ['kills', 'deaths', 'caps', 'bountyKills', 'revengeKills', 'paybackKills', 'treesChopped', 'roadsBuilt', 'wallsBuilt', 'pillsBuilt'] as const;
 
       const leaderboard = [...this.war.profiles.values()]
         .map((p) => {
           const live = liveStats.get(p.did);
           if (!live) return p;
-          return { ...p, kills: p.kills + live.kills, deaths: p.deaths + live.deaths, caps: p.caps + live.caps };
+          const merged = { ...p };
+          for (const k of mergeKeys) (merged[k] as number) = (p[k] ?? 0) + (live[k] ?? 0);
+          return merged;
         })
         .filter((p) => p.kills + p.caps > 0)
         .sort((a, b) => {
@@ -470,6 +480,11 @@ export class GameDO implements DurableObject {
    */
   private processRivalries(events: { e: string; killerDid?: string; victimDid?: string; killer?: string; victim?: string }[]): { e: 'revenge' | 'payback'; killerHandle: string; victimHandle: string }[] {
     const extra: { e: 'revenge' | 'payback'; killerHandle: string; victimHandle: string }[] = [];
+    // Build a DID→tank lookup so we can credit social stats to the live tank
+    // (folded into the profile on disconnect/war end, same as kills/caps).
+    const tanksByDid = new Map<string, import('@bolo/shared').Tank>();
+    for (const t of this.world!.tanks.values()) tanksByDid.set(t.did, t);
+
     for (const ev of events) {
       if (ev.e !== 'kill' || !ev.killerDid || !ev.victimDid) continue;
       const killerProfile = this.profiles.get(ev.killerDid);
@@ -484,6 +499,8 @@ export class GameDO implements DurableObject {
       kr.k++;
       vr.d++;
 
+      const killerTank = tanksByDid.get(ev.killerDid);
+
       // revenge: killer just killed their top nemesis (the person who killed them most)
       let nemesisDid: string | null = null;
       let nemesisDeaths = 0;
@@ -495,11 +512,13 @@ export class GameDO implements DurableObject {
       }
       if (nemesisDid && nemesisDid === ev.victimDid && nemesisDeaths >= 3) {
         extra.push({ e: 'revenge', killerHandle: ev.killer!, victimHandle: ev.victim! });
+        if (killerTank) killerTank.revengeKills++;
       }
 
       // payback: killer just killed someone who killed them at least once this war
       if (vr.k > 0 && kr.d > 0) {
         extra.push({ e: 'payback', killerHandle: ev.killer!, victimHandle: ev.victim! });
+        if (killerTank) killerTank.paybackKills++;
       }
     }
     return extra;

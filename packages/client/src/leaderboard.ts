@@ -113,7 +113,8 @@ export function startLeaderboard(root: HTMLElement): void {
               <span class="lb-stat"><b>${score}</b><small>rating</small></span>
               <span class="lb-stat">${p.kills}/${p.deaths}<small>k/d</small></span>
               <span class="lb-stat">${p.caps}<small>caps</small></span>
-              <span class="lb-stat">${p.warsWon ?? 0}/${p.warsFought}<small>wars won</small></span>
+              <span class="lb-stat">${p.bountyKills ?? 0}<small>💰 bounty</small></span>
+              <span class="lb-stat">${(p.treesChopped ?? 0) + (p.roadsBuilt ?? 0) + (p.wallsBuilt ?? 0) + (p.pillsBuilt ?? 0)}<small>🔨 built</small></span>
             </div>`;
         })
         .join('');
@@ -192,6 +193,13 @@ function showProfileCard(root: HTMLElement, p: PlayerProfile, live?: BskyProfile
         <span><b>${p.kills}</b><small>kills</small></span>
         <span><b>${kd}</b><small>k/d</small></span>
         <span><b>${p.caps}</b><small>captures</small></span>
+        <span><b>${p.bountyKills ?? 0}</b><small>💰 bounty kills</small></span>
+        <span><b>${p.revengeKills ?? 0}</b><small>★ revenge</small></span>
+        <span><b>${p.paybackKills ?? 0}</b><small>↻ payback</small></span>
+        <span><b>${p.treesChopped ?? 0}</b><small>🌲 chopped</small></span>
+        <span><b>${p.roadsBuilt ?? 0}</b><small>🛣 roads</small></span>
+        <span><b>${p.wallsBuilt ?? 0}</b><small>🧱 walls</small></span>
+        <span><b>${p.pillsBuilt ?? 0}</b><small>◈ pillboxes</small></span>
         <span><b>${p.warsWon ?? 0}/${p.warsFought}</b><small>wars won</small></span>
       </div>
       <div class="pcard-foot dim">veteran since ${new Date(p.firstSeen).toLocaleDateString()} · last seen ${new Date(p.lastSeen).toLocaleDateString()}</div>

@@ -220,15 +220,20 @@ export class BuilderSystem {
         if (t === Terrain.Forest) {
           this.host.setTerrain(o.tx, o.ty, Terrain.Grass);
           tank.trees = Math.min(TANK_MAX_TREES, tank.trees + TREES_PER_FOREST_TILE);
+          tank.treesChopped++;
         }
         break;
       case 'road':
-        if (canBuildOn(t) || t === Terrain.River) this.host.setTerrain(o.tx, o.ty, Terrain.Road);
-        else this.refundOrder(tank);
+        if (canBuildOn(t) || t === Terrain.River) {
+          this.host.setTerrain(o.tx, o.ty, Terrain.Road);
+          tank.roadsBuilt++;
+        } else this.refundOrder(tank);
         break;
       case 'wall':
-        if (canBuildOn(t)) this.host.setTerrain(o.tx, o.ty, Terrain.Building);
-        else this.refundOrder(tank);
+        if (canBuildOn(t)) {
+          this.host.setTerrain(o.tx, o.ty, Terrain.Building);
+          tank.wallsBuilt++;
+        } else this.refundOrder(tank);
         break;
       case 'boat':
         if (t === Terrain.River) this.host.setTerrain(o.tx, o.ty, Terrain.BoatTile);
@@ -240,6 +245,7 @@ export class BuilderSystem {
           pillHere.owner = tank.faction;
           pillHere.hp = Math.min(PILL_MAX_HP, pillHere.hp + PILL_REPAIR_HP);
           this.host.pillsChanged = true;
+          tank.pillsBuilt++;
         } else if (tank.carriedPill !== null && canBuildOn(t)) {
           const pill = this.host.pills.find((p) => p.id === tank.carriedPill);
           if (pill) {
@@ -250,6 +256,7 @@ export class BuilderSystem {
             pill.y = o.ty;
             tank.carriedPill = null;
             this.host.pillsChanged = true;
+            tank.pillsBuilt++;
             this.host.events.push({ e: 'pill_placed', pillId: pill.id, x: o.tx, y: o.ty, by: tank.faction });
           }
         } else {

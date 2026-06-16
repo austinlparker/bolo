@@ -313,6 +313,13 @@ export class World implements WorldHost {
       kills: 0,
       deaths: 0,
       caps: 0,
+      bountyKills: 0,
+      revengeKills: 0,
+      paybackKills: 0,
+      treesChopped: 0,
+      roadsBuilt: 0,
+      wallsBuilt: 0,
+      pillsBuilt: 0,
     };
     this.placeAtSpawn(tank);
     this.tanks.set(id, tank);

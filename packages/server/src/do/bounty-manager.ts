@@ -22,6 +22,7 @@ export interface BountyTank {
   id: number;
   did: string;
   kills: number;
+  bountyKills: number;
 }
 
 /** Minimal world view needed by bounty logic. */
@@ -139,6 +140,7 @@ export class BountyManager {
           const tank = world.tanks.get(s.tankId);
           if (tank) {
             tank.kills += reward;
+            tank.bountyKills++;
             credited = true;
           }
           break;
@@ -146,6 +148,7 @@ export class BountyManager {
       }
       if (!credited && claimerProfile) {
         claimerProfile.kills += reward;
+        claimerProfile.bountyKills = (claimerProfile.bountyKills ?? 0) + 1;
       }
       claims.push({
         targetDid: bounty.targetDid,

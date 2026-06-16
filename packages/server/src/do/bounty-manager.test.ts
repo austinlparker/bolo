@@ -47,7 +47,7 @@ function mockProfile(did: string, handle: string, faction: Faction = 'dawn'): Pl
 
 /** Create a minimal tank for bounty tests. */
 function mockTank(id: number, did: string, kills = 0): BountyTank {
-  return { id, did, kills };
+  return { id, did, kills, bountyKills: 0 };
 }
 
 /** Build a BountyWorld from an array of tanks and a tick. */

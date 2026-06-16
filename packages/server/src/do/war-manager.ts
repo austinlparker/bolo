@@ -59,15 +59,29 @@ export class WarManager {
     return profile;
   }
 
-  foldStats(tank: { did: string; kills: number; deaths: number; caps: number }): void {
+  foldStats(tank: { did: string; kills: number; deaths: number; caps: number; bountyKills: number; revengeKills: number; paybackKills: number; treesChopped: number; roadsBuilt: number; wallsBuilt: number; pillsBuilt: number }): void {
     const profile = this.profiles.get(tank.did);
     if (!profile) return;
     profile.kills += tank.kills;
     profile.deaths += tank.deaths;
     profile.caps += tank.caps;
+    profile.bountyKills = (profile.bountyKills ?? 0) + tank.bountyKills;
+    profile.revengeKills = (profile.revengeKills ?? 0) + tank.revengeKills;
+    profile.paybackKills = (profile.paybackKills ?? 0) + tank.paybackKills;
+    profile.treesChopped = (profile.treesChopped ?? 0) + tank.treesChopped;
+    profile.roadsBuilt = (profile.roadsBuilt ?? 0) + tank.roadsBuilt;
+    profile.wallsBuilt = (profile.wallsBuilt ?? 0) + tank.wallsBuilt;
+    profile.pillsBuilt = (profile.pillsBuilt ?? 0) + tank.pillsBuilt;
     tank.kills = 0;
     tank.deaths = 0;
     tank.caps = 0;
+    tank.bountyKills = 0;
+    tank.revengeKills = 0;
+    tank.paybackKills = 0;
+    tank.treesChopped = 0;
+    tank.roadsBuilt = 0;
+    tank.wallsBuilt = 0;
+    tank.pillsBuilt = 0;
   }
 
   endWar(world: World, winner: Faction, store: SessionStore): { record: WarRecord; nextWarAt: number } {

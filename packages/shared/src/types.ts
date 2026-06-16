@@ -51,6 +51,21 @@ export interface Tank {
   kills: number;
   deaths: number;
   caps: number; // bases + pillboxes captured
+  // --- social & builder stats (folded into PlayerProfile on disconnect/war end) ---
+  /** bounty targets claimed (number of claims, not reward amount) */
+  bountyKills: number;
+  /** killed your top nemesis (the player who killed you most) */
+  revengeKills: number;
+  /** killed someone who previously killed you */
+  paybackKills: number;
+  /** trees harvested by the builder */
+  treesChopped: number;
+  /** roads paved */
+  roadsBuilt: number;
+  /** walls raised (excludes repairs) */
+  wallsBuilt: number;
+  /** pillboxes placed or repaired */
+  pillsBuilt: number;
   /** input kind from hello ('npc' for garrison tanks) — telemetry segmentation */
   client: string;
   /** server-only: tick of first damage in the current engagement (TTK telemetry) */
@@ -137,6 +152,14 @@ export interface PlayerProfile {
   warsFought: number;
   /** ...and how many of those their faction won */
   warsWon: number;
+  // --- social & builder stats (optional: backfilled to 0 on load) ---
+  bountyKills?: number;
+  revengeKills?: number;
+  paybackKills?: number;
+  treesChopped?: number;
+  roadsBuilt?: number;
+  wallsBuilt?: number;
+  pillsBuilt?: number;
   firstSeen: number;
   lastSeen: number;
   /** rivalry stats: otherDID → { k: times you killed them, d: times they killed you } */
