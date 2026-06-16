@@ -19,6 +19,18 @@ import { loadSprites } from './sprites';
 import { GameState } from './state';
 import { isTouchDevice, TouchControls } from './touch';
 
+// Mobile browsers can pinch- or double-tap-zoom the page even with
+// user-scalable=no in the viewport. Once zoomed in, the touch-action:none
+// canvas blocks the pinch-out that would undo it — trapping the view. CSS
+// touch-action:none on the root stops this on most browsers; iOS Safari also
+// emits non-standard gesture* events for pinches that can bypass touch-action,
+// so kill those outright. The game uses a fixed camera zoom, so page-zoom is
+// never desirable.
+const suppressZoom = (e: Event) => e.preventDefault();
+for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) {
+  addEventListener(ev, suppressZoom, { passive: false });
+}
+
 const root = document.getElementById('app')!;
 
 if (location.pathname.startsWith('/map')) {

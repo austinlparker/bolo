@@ -41,6 +41,11 @@ body {
   font-family: 'Courier New', ui-monospace, monospace;
   overflow: hidden;
   overscroll-behavior: none;
+  /* Full-screen game: the browser must never pinch-/double-tap-zoom the page.
+     Once it zooms in, the touch-action:none canvas blocks the pinch-out that
+     would undo it — trapping the view. `none` on the root elements propagates
+     to every descendant (touch-action intersects up the tree). */
+  touch-action: none;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -55,6 +60,7 @@ canvas.game {
      visible area (and the renderer measures clientHeight to match). */
   width: 100dvw;
   height: 100dvh;
+  touch-action: none;
 }
 
 canvas.game {
