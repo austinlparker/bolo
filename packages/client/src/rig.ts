@@ -102,7 +102,10 @@ function makePaneWorld(tuning: TankTuning): { world: World; tank: Tank } {
   const world = new World(1, 7);
   Object.assign(world.tuning, tuning);
   buildArena(world);
-  const tank = world.addTank('did:rig', 'rig', 'dawn', false);
+  // NPC tanks use the server-side turn model (setInput with turn values),
+  // which is what the rig compares. Player tanks skip server-side turn
+  // (heading is client-authoritative), so the rig uses NPC for its panes.
+  const tank = world.addTank('did:rig', 'rig', 'dawn', true);
   tank.x = ARENA_C + 0.5;
   tank.y = ARENA_C + 0.5;
   tank.dir = 0;

@@ -37,30 +37,31 @@ export class TankSystem {
     const input = this.host.inputs.get(tank.id) ?? { accel: 0, turn: 0, fire: false };
     const tuning = this.host.tuning;
 
-    // rotational inertia: the turn rate ramps UP toward the input's target
-    // (a tank has mass), but slowing, releasing or reversing is instant so
-    // aim never overshoots the moment you let go
-    const targetRate = clamp(input.turn, -1, 1) * tuning.turnRate;
-    if (targetRate * tank.turnSpeed < 0) tank.turnSpeed = 0; // reversal restarts the ramp
-    if (Math.abs(targetRate) <= Math.abs(tank.turnSpeed)) {
-      tank.turnSpeed = targetRate;
-    } else {
-      tank.turnSpeed =
-        targetRate > 0
-          ? Math.min(targetRate, tank.turnSpeed + tuning.turnAccel * DT)
-          : Math.max(targetRate, tank.turnSpeed - tuning.turnAccel * DT);
+    if (tank.npc) {
+      // NPC: server-authoritative turn (rotational inertia + nudge drain).
+      // Player heading is set by World.setHeading() from the client's
+      // authoritative dir — no turn integration needed here.
+      const targetRate = clamp(input.turn, -1, 1) * tuning.turnRate;
+      if (targetRate * tank.turnSpeed < 0) tank.turnSpeed = 0; // reversal restarts the ramp
+      if (Math.abs(targetRate) <= Math.abs(tank.turnSpeed)) {
+        tank.turnSpeed = targetRate;
+      } else {
+        tank.turnSpeed =
+          targetRate > 0
+            ? Math.min(targetRate, tank.turnSpeed + tuning.turnAccel * DT)
+            : Math.max(targetRate, tank.turnSpeed - tuning.turnAccel * DT);
+      }
+      // held turn + queued fine-aim nudges, under one per-tick rotation budget:
+      const turnStep = tank.turnSpeed * DT;
+      const pending = this.host.nudges.get(tank.id) ?? 0;
+      const budget = tuning.turnRate * DT - Math.abs(turnStep);
+      const nudgeStep = clamp(pending, -budget, budget);
+      tank.dir += turnStep + nudgeStep;
+      if (Math.abs(pending - nudgeStep) > 1e-6) this.host.nudges.set(tank.id, pending - nudgeStep);
+      else this.host.nudges.delete(tank.id);
+      if (tank.dir > Math.PI) tank.dir -= 2 * Math.PI;
+      else if (tank.dir < -Math.PI) tank.dir += 2 * Math.PI;
     }
-    // held turn + queued fine-aim nudges, under one per-tick rotation budget:
-    // the held key takes priority, nudges drain from whatever budget remains
-    const turnStep = tank.turnSpeed * DT;
-    const pending = this.host.nudges.get(tank.id) ?? 0;
-    const budget = tuning.turnRate * DT - Math.abs(turnStep);
-    const nudgeStep = clamp(pending, -budget, budget);
-    tank.dir += turnStep + nudgeStep;
-    if (Math.abs(pending - nudgeStep) > 1e-6) this.host.nudges.set(tank.id, pending - nudgeStep);
-    else this.host.nudges.delete(tank.id);
-    if (tank.dir > Math.PI) tank.dir -= 2 * Math.PI;
-    else if (tank.dir < -Math.PI) tank.dir += 2 * Math.PI;
 
     const here = this.host.tileAt(tank.x, tank.y);
     const onWater = here === Terrain.DeepSea || here === Terrain.River || here === Terrain.BoatTile;

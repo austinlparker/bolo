@@ -1,5 +1,5 @@
 /** Keyboard + mouse -> protocol messages. Bolo-style held controls. */
-import { type InputMsg, MAP_SIZE, SHELL_RANGE } from '@bolo/shared';
+import { angleDelta, type InputMsg, MAP_SIZE, SHELL_RANGE, TANK_TURN_ACCEL, TANK_TURN_RATE } from '@bolo/shared';
 import type { Hud } from './hud';
 import { TOOLS } from './hud';
 import type { Net } from './net';
@@ -8,11 +8,11 @@ import type { Sound } from './sound';
 import type { GameState } from './state';
 
 export interface KeyboardTuning {
-  /** radians per fine-aim tap; see InputMsg.nudge */
+  /** radians per fine-aim tap (applied directly to heading) */
   fineNudge: number;
   /** radians per shift+tap (finer for pixel-precise aiming) */
   fineNudgeShift: number;
-  /** how fast turnValue ramps 0→1 per second (full lock in ~1/rate seconds) */
+  /** how fast the turn ramp builds 0→1 per second (used by the /rig dev tool) */
   turnRampRate: number;
   /** cruise units changed per second while W/S (throttle up/down) is held */
   throttleRate: number;
@@ -34,11 +34,13 @@ const TURN_KEYS: Record<string, -1 | 1> = { KeyA: -1, ArrowLeft: -1, KeyD: 1, Ar
 
 export class Input {
   private held = new Set<string>();
-  private last: InputMsg = { t: 'input', accel: 0, turn: 0, fire: false };
+  private last: InputMsg = { t: 'input', accel: 0, dir: 0, fire: false };
   /** persistent throttle (cruise) in [-1, 1]; W/S nudge it, it holds; X stops. */
   private cruise = 0;
-  /** current fractional turn [-1, 1]; ramps toward target while a key is held */
-  private turnValue = 0;
+  /** client-authoritative heading in radians [-π, π] */
+  private myDir = 0;
+  /** current turn rate (rad/s); ramps toward target while a key is held */
+  private turnSpeed = 0;
   private lastNow = 0;
   private gameState: GameState;
   private doSend!: () => void;
@@ -64,23 +66,19 @@ export class Input {
       net.send({ t: 'builder', order: hud.tool, x, y });
     };
 
-    // turn is a ramping value: a quick tap yields a tiny rotation plus a nudge,
-    // a hold ramps up to full-rate turn over ~167ms. The server's turn-accel
-    // model smooths it further. No binary threshold or timer needed.
-    const send = (nudge?: number) => {
-      // accel is the held cruise level (integrated in tick), not momentary W/S
+    // heading is client-authoritative: the Input class integrates dir locally
+    // (ramping turnSpeed using the same constants as the server's NPC model)
+    // and sends the absolute heading. No nudge queue — taps modify myDir
+    // directly.
+    const send = () => {
       const accel = Math.round(this.cruise * 100) / 100;
-      const turn = Math.round(this.turnValue * 100) / 100;
       const fire = this.held.has('Space');
-      const msg: InputMsg = { t: 'input', accel, turn, fire };
-      // feed the prediction model so the client can dead-reckon your own
-      // tank without waiting for the server round-trip
-      this.gameState.recordInput(accel, turn, fire, nudge);
-      const changed = msg.accel !== this.last.accel || msg.turn !== this.last.turn || msg.fire !== this.last.fire;
-      if (changed || nudge !== undefined) {
-        this.last = msg;
-        if (nudge !== undefined) msg.nudge = nudge;
-        net.send(msg);
+      this.gameState.recordInput(accel, this.myDir, fire);
+      const dir = Math.round(this.myDir * 100) / 100;
+      const changed = accel !== this.last.accel || dir !== this.last.dir || fire !== this.last.fire;
+      if (changed) {
+        this.last = { t: 'input', accel, dir, fire };
+        net.send(this.last);
       }
     };
 
@@ -89,7 +87,7 @@ export class Input {
     // NaN sentinel guarantees the next send differs (NaN !== anything), forcing
     // a resend of whatever is currently held even if the values are unchanged.
     this.resync = () => {
-      this.last = { t: 'input', accel: NaN, turn: 0, fire: false };
+      this.last = { t: 'input', accel: NaN, dir: 0, fire: false };
       send();
     };
 
@@ -182,7 +180,10 @@ export class Input {
         this.held.add(ev.code);
         // shift+tap = half the nudge for pixel-precise aiming
         const nudgeSize = ev.shiftKey ? KEYBOARD_TUNING.fineNudgeShift : KEYBOARD_TUNING.fineNudge;
-        send(dir * nudgeSize); // instant fine tap; the ramp in tick() handles holds
+        this.myDir += dir * nudgeSize; // instant fine tap applied directly to heading
+        if (this.myDir > Math.PI) this.myDir -= 2 * Math.PI;
+        else if (this.myDir < -Math.PI) this.myDir += 2 * Math.PI;
+        send();
         return;
       }
       this.held.add(ev.code);
@@ -191,16 +192,16 @@ export class Input {
 
     addEventListener('keyup', (ev) => {
       this.held.delete(ev.code);
-      // instant stop when all turn keys are released (matches server: release = instant)
+      // instant stop when all turn keys are released (matches old server: release = instant)
       const left = this.held.has('KeyA') || this.held.has('ArrowLeft');
       const right = this.held.has('KeyD') || this.held.has('ArrowRight');
-      if (!left && !right && this.turnValue !== 0) this.turnValue = 0;
+      if (!left && !right && this.turnSpeed !== 0) this.turnSpeed = 0;
       send();
     });
 
     addEventListener('blur', () => {
       this.held.clear();
-      this.turnValue = 0;
+      this.turnSpeed = 0;
       send();
     });
 
@@ -256,21 +257,26 @@ export class Input {
   /**
    * Integrate throttle and turn each frame. Throttle (W/S) ramps the
    * persistent cruise up/down and it holds when released. Turn (A/D)
-   * ramps from 0 toward ±1 — a quick tap yields a small rotation plus
-   * the keydown nudge, a hold builds to full-rate turn. Death resets both.
-   * Call from the render loop.
+   * ramps turnSpeed toward ±TANK_TURN_RATE and integrates into myDir —
+   * a quick tap yields a small rotation (from the keydown nudge), a
+   * hold builds to full-rate turn. Death resets cruise and turnSpeed
+   * but NOT myDir (it holds position). Call from the render loop.
    */
   tick(now: number): void {
     const dt = this.lastNow ? Math.min(0.1, (now - this.lastNow) / 1000) : 0;
     this.lastNow = now;
     const me = this.gameState.me();
     if (!me || !me.alive) {
-      if (this.cruise !== 0 || this.turnValue !== 0) {
+      if (this.cruise !== 0 || this.turnSpeed !== 0) {
         this.cruise = 0;
-        this.turnValue = 0;
+        this.turnSpeed = 0;
         this.doSend();
       }
       return;
+    }
+    // sync myDir from server on large divergence (respawn/teleport)
+    if (Math.abs(angleDelta(this.myDir, me.dir)) > 0.15) {
+      this.myDir = me.dir;
     }
     // --- throttle: ramp cruise toward held direction ---
     const up = this.held.has('KeyW') || this.held.has('ArrowUp');
@@ -278,30 +284,36 @@ export class Input {
     const thrDir = (up ? 1 : 0) - (down ? 1 : 0);
     if (thrDir !== 0) {
       this.cruise = Math.max(-1, Math.min(1, this.cruise + thrDir * KEYBOARD_TUNING.throttleRate * dt));
-      this.doSend();
     }
-    // --- turn: ramp turnValue toward target (proportional control) ---
+    // --- turn: ramp turnSpeed and integrate into myDir (same mass model as NPC) ---
     const left = this.held.has('KeyA') || this.held.has('ArrowLeft');
     const right = this.held.has('KeyD') || this.held.has('ArrowRight');
     const targetTurn = (right ? 1 : 0) - (left ? 1 : 0);
     if (targetTurn === 0) {
-      // no turn input (or both keys = cancel): instant stop
-      if (this.turnValue !== 0) {
-        this.turnValue = 0;
-        this.doSend();
-      }
+      if (this.turnSpeed !== 0) this.turnSpeed = 0;
     } else {
-      // reversal restarts the ramp (matches server: instant on direction change)
-      if (Math.sign(targetTurn) !== Math.sign(this.turnValue) && this.turnValue !== 0) {
-        this.turnValue = 0;
+      const targetRate = targetTurn * TANK_TURN_RATE;
+      // reversal restarts the ramp (instant on direction change)
+      if (Math.sign(targetRate) !== Math.sign(this.turnSpeed) && this.turnSpeed !== 0) {
+        this.turnSpeed = 0;
       }
-      const diff = targetTurn - this.turnValue;
-      const step = KEYBOARD_TUNING.turnRampRate * dt;
-      const newVal = Math.abs(diff) <= step ? targetTurn : this.turnValue + Math.sign(diff) * step;
-      if (newVal !== this.turnValue) {
-        this.turnValue = newVal;
-        this.doSend();
+      if (Math.abs(targetRate) <= Math.abs(this.turnSpeed)) {
+        this.turnSpeed = targetRate;
+      } else {
+        this.turnSpeed = targetRate > 0
+          ? Math.min(targetRate, this.turnSpeed + TANK_TURN_ACCEL * dt)
+          : Math.max(targetRate, this.turnSpeed - TANK_TURN_ACCEL * dt);
       }
+    }
+    // integrate turn into heading
+    if (this.turnSpeed !== 0) {
+      this.myDir += this.turnSpeed * dt;
+      if (this.myDir > Math.PI) this.myDir -= 2 * Math.PI;
+      else if (this.myDir < -Math.PI) this.myDir += 2 * Math.PI;
+    }
+    // send whenever throttle or turn is active (send() only network-sends on changed values)
+    if (thrDir !== 0 || this.turnSpeed !== 0) {
+      this.doSend();
     }
   }
 }

@@ -21,8 +21,6 @@ import {
   TANK_ACCEL,
   TANK_ACCEL_CURVE,
   TANK_BRAKE,
-  TANK_TURN_RATE,
-  TANK_TURN_ACCEL,
   TANK_REVERSE_FACTOR,
   Terrain,
   TERRAIN,
@@ -100,31 +98,29 @@ export class GameState {
 
   // ---------- client-side prediction (own tank) ----------
   /** current input the player is sending to the server */
-  myInput: { accel: number; turn: number; fire: boolean } = { accel: 0, turn: 0, fire: false };
+  myInput: { accel: number; dir: number; fire: boolean } = { accel: 0, dir: 0, fire: false };
+  /** client-authoritative heading (always exact; synced from server on respawn) */
+  private myDir = 0;
   /**
    * Predicted state for the player's own tank: last authoritative snapshot
-   * position/dir/speed from the server, integrated forward by replayed inputs
+   * position/speed from the server, integrated forward by replayed inputs
    * each frame so the camera and own-tank sprite react instantly.
+   * Heading is client-authoritative (always exact from myDir).
    */
-  private pred: { x: number; y: number; dir: number; speed: number; turnSpeed: number; onBoat: boolean; at: number } | null = null;
+  private pred: { x: number; y: number; dir: number; speed: number; onBoat: boolean; at: number } | null = null;
   /** performance.now() of the last server snapshot used to seed prediction */
   private predSeedAt = 0;
   /** true when a new server snapshot requires re-seed + input replay */
   private predDirty = false;
   /** ring buffer of recent inputs, tagged with estimated server tick */
-  private inputBuffer: Array<{ tick: number; accel: number; turn: number; fire: boolean; nudge: number }> = [];
+  private inputBuffer: Array<{ tick: number; accel: number; dir: number; fire: boolean }> = [];
   /** last server tick acknowledged (from the most recent StateMsg) */
   private lastAckTick = 0;
   /** performance.now() when the last server snapshot arrived */
   private lastSnapshotAt = 0;
-  /** local nudge queue for prediction (mirrors server's host.nudges) */
-  private predNudges = 0;
-  /** error-decay correction buffers (residual drift spread over ERROR_DECAY_MS) */
+  /** error-decay correction buffers (residual position drift spread over ERROR_DECAY_MS) */
   private errorX = 0;
   private errorY = 0;
-  private errorDir = 0;
-  private errorSpeed = 0;
-  private errorTurnSpeed = 0;
   /**
    * Terrain change tracking with multiple consumers (main view + minimap
    * caches): a version bump means "repaint everything"; the log appends
@@ -276,16 +272,16 @@ export class GameState {
 
   /**
    * Record a local input (from keyboard or touch) for client-side prediction.
-   * Pushes to the input replay buffer and feeds the local nudge queue so the
-   * crosshair moves instantly without waiting for server confirmation.
+   * Stores the absolute heading so the prediction replay can dead-reckon
+   * position without a turn model.
    */
-  recordInput(accel: number, turn: number, fire: boolean, nudge?: number): void {
-    this.myInput = { accel, turn, fire };
+  recordInput(accel: number, dir: number, fire: boolean): void {
+    this.myInput = { accel, dir, fire };
+    this.myDir = dir;
     const now = performance.now();
     const tick = this.lastAckTick + Math.floor((now - this.lastSnapshotAt) / TICK_MS);
-    this.inputBuffer.push({ tick, accel, turn, fire, nudge: nudge ?? 0 });
+    this.inputBuffer.push({ tick, accel, dir, fire });
     if (this.inputBuffer.length > MAX_INPUT_BUFFER) this.inputBuffer.shift();
-    if (nudge) this.predNudges += nudge;
   }
 
   /**
@@ -322,16 +318,15 @@ export class GameState {
    * state and replay the local input buffer forward to `now`. Between
    * snapshots, continue integrating with the latest input. Residual drift
    * (from unmodeled collisions etc.) is spread over ERROR_DECAY_MS instead
-   * of snapping. This gives instant visual response to controls — including
-   * fine-aim nudges — without waiting for the server round-trip.
+   * of snapping. Heading is always exact (client-authoritative).
    */
   predictedSelf(now: number): { x: number; y: number; dir: number } {
     const snap = this.me();
     if (!snap || !this.you || !snap.alive) {
       this.pred = null;
-      this.errorX = this.errorY = this.errorDir = this.errorSpeed = this.errorTurnSpeed = 0;
+      this.errorX = this.errorY = 0;
       const it = this.you ? this.tanks.get(this.you.tankId) : undefined;
-      return it ? this.lerpTank(it, now) : { x: MAP_SIZE / 2, y: MAP_SIZE / 2, dir: 0 };
+      return it ? this.lerpTank(it, now) : { x: MAP_SIZE / 2, y: MAP_SIZE / 2, dir: this.myDir };
     }
 
     // Frame dt for error decay (captured before pred.at is overwritten)
@@ -340,24 +335,17 @@ export class GameState {
     if (this.predDirty || !this.pred) {
       // --- Re-seed from server snapshot + replay inputs (Gambetta's model) ---
 
-      // Capture old display position (pred + error) so the renderer doesn't jump
+      // Capture old display position so the renderer doesn't jump
       const oldX = this.pred ? this.pred.x + this.errorX : snap.x;
       const oldY = this.pred ? this.pred.y + this.errorY : snap.y;
-      const oldDir = this.pred ? this.pred.dir + this.errorDir : snap.dir;
 
-      // Re-seed from authoritative server state
+      // Re-seed from authoritative server state (position only; heading stays client-owned)
       this.pred = {
         x: snap.x, y: snap.y, dir: snap.dir,
-        speed: snap.speed, turnSpeed: snap.turnSpeed ?? 0,
+        speed: snap.speed,
         onBoat: snap.onBoat, at: this.lastSnapshotAt,
       };
       this.predSeedAt = this.lastSnapshotAt;
-
-      // Re-accumulate nudges from unacknowledged buffer entries
-      this.predNudges = 0;
-      for (const entry of this.inputBuffer) {
-        if (entry.tick > this.lastAckTick && entry.nudge) this.predNudges += entry.nudge;
-      }
 
       // Replay inputs from lastSnapshotAt to now, stepping in server-tick increments
       if (this.pred.at < now) {
@@ -375,18 +363,15 @@ export class GameState {
       // Drop acknowledged buffer entries (server has already processed them)
       this.inputBuffer = this.inputBuffer.filter((e) => e.tick > this.lastAckTick);
 
-      // Compute residual error: old display position vs new prediction.
-      // Display starts at oldDisplay and decays toward the new pred over
-      // ERROR_DECAY_MS, so corrections are smooth rather than snapping.
+      // Compute residual position error: old display position vs new prediction.
       const newPred = this.pred;
       const drift = Math.hypot(oldX - newPred.x, oldY - newPred.y);
       if (drift > HARD_SNAP_THRESHOLD) {
         // Catastrophic drift (teleport, respawn): snap immediately, no smoothing
-        this.errorX = this.errorY = this.errorDir = 0;
+        this.errorX = this.errorY = 0;
       } else {
         this.errorX = oldX - newPred.x;
         this.errorY = oldY - newPred.y;
-        this.errorDir = angleDelta(newPred.dir, oldDir);
       }
 
       this.predDirty = false;
@@ -403,16 +388,15 @@ export class GameState {
       }
     }
 
-    // --- Error decay: spread residual correction over ERROR_DECAY_MS ---
+    // --- Error decay: spread residual position correction over ERROR_DECAY_MS ---
     const correction = Math.min(1, frameDt / (ERROR_DECAY_MS / 1000));
     this.errorX *= 1 - correction;
     this.errorY *= 1 - correction;
-    this.errorDir *= 1 - correction;
 
     return {
       x: this.pred.x + this.errorX,
       y: this.pred.y + this.errorY,
-      dir: this.pred.dir + this.errorDir,
+      dir: this.myDir, // client-authoritative heading — always exact
     };
   }
 
@@ -420,11 +404,11 @@ export class GameState {
    * Find the input that was active at a given estimated server tick.
    * Scans the buffer backward for the latest entry at or before stepTick.
    */
-  private lookupInput(stepTick: number): { accel: number; turn: number; fire: boolean } {
+  private lookupInput(stepTick: number): { accel: number; dir: number; fire: boolean } {
     for (let i = this.inputBuffer.length - 1; i >= 0; i--) {
       if (this.inputBuffer[i].tick <= stepTick) {
         const e = this.inputBuffer[i];
-        return { accel: e.accel, turn: e.turn, fire: e.fire };
+        return { accel: e.accel, dir: e.dir, fire: e.fire };
       }
     }
     return this.myInput;
@@ -432,34 +416,14 @@ export class GameState {
 
   /**
    * One integration step replicating the server's tank movement model
-   * (tank-system.ts): rotational inertia + nudge draining + terrain-aware
-   * accel + building/sea collision. Collision prediction eliminates most
-   * position snaps when driving into walls.
+   * (tank-system.ts): terrain-aware accel + building/sea collision.
+   * Heading is client-authoritative (set from input.dir each step).
+   * Collision prediction eliminates most position snaps when driving into walls.
    */
-  private predStep(dt: number, input: { accel: number; turn: number; fire: boolean }): void {
+  private predStep(dt: number, input: { accel: number; dir: number }): void {
     if (!this.pred) return;
     const p = this.pred;
-
-    // --- turning: same inertia model as tank-system.ts ---
-    const targetRate = Math.max(-1, Math.min(1, input.turn)) * TANK_TURN_RATE;
-    if (targetRate * p.turnSpeed < 0) p.turnSpeed = 0;
-    if (Math.abs(targetRate) <= Math.abs(p.turnSpeed)) {
-      p.turnSpeed = targetRate;
-    } else {
-      p.turnSpeed = targetRate > 0
-        ? Math.min(targetRate, p.turnSpeed + TANK_TURN_ACCEL * dt)
-        : Math.max(targetRate, p.turnSpeed - TANK_TURN_ACCEL * dt);
-    }
-
-    // held turn + queued fine-aim nudges share one per-tick rotation budget
-    // (mirrors server's tank-system.ts nudge draining)
-    const turnStep = p.turnSpeed * dt;
-    const budget = TANK_TURN_RATE * dt - Math.abs(turnStep);
-    const nudgeStep = Math.max(-budget, Math.min(budget, this.predNudges));
-    this.predNudges -= nudgeStep;
-    p.dir += turnStep + nudgeStep;
-    if (p.dir > Math.PI) p.dir -= 2 * Math.PI;
-    else if (p.dir < -Math.PI) p.dir += 2 * Math.PI;
+    p.dir = input.dir; // client-authoritative heading
 
     // --- speed: accel toward target speed fraction (terrain-aware) ---
     const maxSpeed = this.terrainMaxSpeed(p.x, p.y, p.onBoat);

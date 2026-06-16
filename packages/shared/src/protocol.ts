@@ -12,7 +12,7 @@ import type { Base, BuilderOrderKind, Pillbox, PlayerProfile, Tank, WarInfo, War
  * (deploys iterate fast and stale tabs otherwise play a skewed protocol —
  * an early playtester's whole first session was an unversioned old bundle).
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 // ---------- client -> server ----------
 
@@ -28,19 +28,18 @@ export interface HelloMsg {
 /**
  * Held-control input, Bolo style: the tank keeps doing this until told
  * otherwise. Send a new input message only when a control changes.
- * Values are clamped to [-1, 1]; fractional turn allows fine aiming.
+ *
+ * Heading is **client-authoritative**: the client owns `dir` (absolute
+ * heading in radians) and the server trusts it with a rate-limit safety
+ * clamp (see World.setHeading). `accel` is a target-speed fraction in
+ * [-1, 1]; the server integrates position from it.
  */
 export interface InputMsg {
   t: 'input';
   accel: number;
-  turn: number; // positive turns clockwise (screen-space, y-down)
+  /** absolute heading in radians [-π, π]; client-authoritative (server rate-limits) */
+  dir: number;
   fire: boolean;
-  /**
-   * Fine-aim tap: a discrete extra rotation in radians, queued server-side
-   * and drained at the standard turn rate (so taps are lossless at any tick
-   * rate but can never out-turn a held key). Clamped per message.
-   */
-  nudge?: number;
 }
 
 export interface BuilderMsg {
@@ -115,8 +114,8 @@ export interface TankView {
   y: number;
   dir: number;
   speed: number;
-  /** current turn rate, radians/sec (for client-side prediction reconciliation) */
-  turnSpeed: number;
+  /** current turn rate, radians/sec (NPCs only; players send absolute heading via InputMsg.dir) */
+  turnSpeed?: number;
   alive: boolean;
   onBoat: boolean;
   /** only present for YOUR tank */

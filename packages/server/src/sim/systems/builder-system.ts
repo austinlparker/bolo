@@ -274,9 +274,16 @@ export class BuilderSystem {
       case 'road':
         tank.trees = Math.min(TANK_MAX_TREES, tank.trees + COST_ROAD);
         break;
-      case 'wall':
-        tank.trees = Math.min(TANK_MAX_TREES, tank.trees + COST_WALL);
+      case 'wall': {
+        // Refund the exact amount charged at order time. A repair
+        // (target was ShotBuilding) costs COST_WALL_REPAIR, not COST_WALL.
+        // The builder hasn't completed its work during refund, so the
+        // terrain at the target tile is unchanged from when the order was placed.
+        const t = this.host.terrain[idx(o.tx, o.ty)] as Terrain;
+        const refund = t === Terrain.ShotBuilding ? COST_WALL_REPAIR : COST_WALL;
+        tank.trees = Math.min(TANK_MAX_TREES, tank.trees + refund);
         break;
+      }
       case 'boat':
         tank.trees = Math.min(TANK_MAX_TREES, tank.trees + COST_BOAT);
         break;

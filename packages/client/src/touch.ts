@@ -9,6 +9,7 @@
  *    FIRE button.
  * Build / chat / emote live in a center strip; the menu is ⋯ by the minimap.
  */
+import { angleDelta, TANK_TURN_ACCEL, TANK_TURN_RATE } from '@bolo/shared';
 import type { Net } from './net';
 import type { GameState } from './state';
 
@@ -106,10 +107,14 @@ export class TouchControls {
   private net: Net;
   /** persistent cruise setting in [-1, 1]; the throttle nudges it, it holds */
   private cruise = 0;
+  /** client-authoritative heading in radians [-π, π] */
+  private myDir = 0;
+  /** current turn rate (rad/s); ramps toward stick target */
+  private turnSpeed = 0;
   private lastNow = 0;
   private throttleWasActive = false;
   private turnWasActive = false;
-  private lastSent = { accel: 0, turn: 0, fire: false };
+  private lastSent = { accel: 0, dir: 0, fire: false };
   private lastSentAt = 0;
 
   constructor(root: HTMLElement, net: Net) {
@@ -173,42 +178,66 @@ export class TouchControls {
     const thr = axis(-this.throttle.y, t.deadzone);
     if (thr !== 0) this.cruise = clamp1(this.cruise + thr * t.throttleRate * dt);
     // a fresh spawn (or death) resets the held speed so you don't rocket off
-    if (!me || !me.alive) this.cruise = 0;
+    if (!me || !me.alive) {
+      this.cruise = 0;
+      this.turnSpeed = 0;
+    }
     this.renderFill();
 
     if (!me) return;
 
+    // sync myDir from server on large divergence (respawn/teleport)
+    if (Math.abs(angleDelta(this.myDir, me.dir)) > 0.15) this.myDir = me.dir;
+
     const accel = Math.round(this.cruise * 100) / 100;
     // turn: ease-in past a wider deadzone so a near-centered stick holds straight
     const tx = axis(this.turn.x, t.turnDeadzone);
-    const turn = clamp1(Math.sign(tx) * tx * tx * t.turnGain);
+    const targetRate = clamp1(Math.sign(tx) * tx * tx * t.turnGain) * TANK_TURN_RATE;
+    // ramp turnSpeed toward target (same mass model as keyboard)
+    if (targetRate === 0) {
+      this.turnSpeed = 0;
+    } else {
+      if (Math.sign(targetRate) !== Math.sign(this.turnSpeed) && this.turnSpeed !== 0) this.turnSpeed = 0;
+      if (Math.abs(targetRate) <= Math.abs(this.turnSpeed)) {
+        this.turnSpeed = targetRate;
+      } else {
+        this.turnSpeed = targetRate > 0
+          ? Math.min(targetRate, this.turnSpeed + TANK_TURN_ACCEL * dt)
+          : Math.max(targetRate, this.turnSpeed - TANK_TURN_ACCEL * dt);
+      }
+    }
+    // integrate turn into heading
+    this.myDir += this.turnSpeed * dt;
+    if (this.myDir > Math.PI) this.myDir -= 2 * Math.PI;
+    else if (this.myDir < -Math.PI) this.myDir += 2 * Math.PI;
+
     const fire = this.fireHeld;
+    const dir = Math.round(this.myDir * 100) / 100;
 
     const throttleActive = thr !== 0;
-    const turnActive = tx !== 0;
+    const turnActive = this.turnSpeed !== 0;
     const fireChanged = fire !== this.lastSent.fire;
     const moved =
-      Math.abs(accel - this.lastSent.accel) > EPSILON || Math.abs(turn - this.lastSent.turn) > EPSILON;
+      Math.abs(accel - this.lastSent.accel) > EPSILON || Math.abs(dir - this.lastSent.dir) > EPSILON;
     // when a control settles back to neutral, push the final value once so the
-    // server's sticky input lands exactly on the held cruise / on turn=0
+    // server's sticky input lands exactly on the held cruise / heading
     const settled =
       (this.throttleWasActive && !throttleActive) || (this.turnWasActive && !turnActive);
     this.throttleWasActive = throttleActive;
     this.turnWasActive = turnActive;
 
     if (fireChanged || settled || (moved && now - this.lastSentAt > SEND_MIN_INTERVAL)) {
-      this.lastSent = { accel, turn, fire };
+      this.lastSent = { accel, dir, fire };
       this.lastSentAt = now;
-      const turnRounded = Math.round(turn * 100) / 100;
-      this.net.send({ t: 'input', accel, turn: turnRounded, fire });
+      this.net.send({ t: 'input', accel, dir, fire });
       // feed the prediction model so the client can dead-reckon (same as keyboard)
-      state.recordInput(accel, turnRounded, fire);
+      state.recordInput(accel, this.myDir, fire);
     }
   }
 
-  /** Force the next tick to resend (held cruise/turn/fire) after a reconnect. */
+  /** Force the next tick to resend (held cruise/heading/fire) after a reconnect. */
   resync(): void {
-    this.lastSent = { accel: NaN, turn: 0, fire: false };
+    this.lastSent = { accel: NaN, dir: 0, fire: false };
     this.lastSentAt = 0;
   }
 

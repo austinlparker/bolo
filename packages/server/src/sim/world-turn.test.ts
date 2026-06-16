@@ -16,11 +16,13 @@ describe('World turn & aim', () => {
     restoreRandom = null;
   });
 
-  describe('turn rate ramp', () => {
+  // --- NPC turn model (server-authoritative; unchanged by client-heading refactor) ---
+
+  describe('NPC turn rate ramp', () => {
     it('turn:1 from rest ramps turnSpeed toward TANK_TURN_RATE (not instant)', () => {
       const w = makeWorld();
       for (let dx = -5; dx <= 5; dx++) setTile(w, 128 + dx, 128, Terrain.Road);
-      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0 });
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0, npc: true });
       w.setInput(tank.id, { accel: 0, turn: 1, fire: false });
       step(w, null, 1);
       // After 1 tick: turnSpeed = TANK_TURN_ACCEL * DT (ramping up)
@@ -32,11 +34,11 @@ describe('World turn & aim', () => {
     });
   });
 
-  describe('reversal resets ramp', () => {
+  describe('NPC reversal resets ramp', () => {
     it('turn:1 then turn:-1 → turnSpeed jumps to 0 then ramps negative', () => {
       const w = makeWorld();
       for (let dx = -5; dx <= 5; dx++) setTile(w, 128 + dx, 128, Terrain.Road);
-      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0 });
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0, npc: true });
       // Ramp up positive
       w.setInput(tank.id, { accel: 0, turn: 1, fire: false });
       step(w, null, 10);
@@ -50,11 +52,11 @@ describe('World turn & aim', () => {
     });
   });
 
-  describe('nudge budget', () => {
+  describe('NPC nudge budget', () => {
     it('queued nudge drains over multiple ticks', () => {
       const w = makeWorld();
       for (let dx = -5; dx <= 5; dx++) setTile(w, 128 + dx, 128, Terrain.Road);
-      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0 });
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0, npc: true });
       // Queue a large nudge with no held turn
       w.addNudge(tank.id, 0.5);
       const dirBefore = tank.dir;
@@ -70,7 +72,7 @@ describe('World turn & aim', () => {
     it('held key takes priority over nudge', () => {
       const w = makeWorld();
       for (let dx = -5; dx <= 5; dx++) setTile(w, 128 + dx, 128, Terrain.Road);
-      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0 });
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0, npc: true });
       // Both held turn and queued nudge
       w.addNudge(tank.id, 0.3);
       w.setInput(tank.id, { accel: 0, turn: 1, fire: false });
@@ -83,11 +85,11 @@ describe('World turn & aim', () => {
     });
   });
 
-  describe('nudge clamp', () => {
+  describe('NPC nudge clamp', () => {
     it('addNudge clamps cumulative pending to [-π, π]', () => {
       const w = makeWorld();
       for (let dx = -5; dx <= 5; dx++) setTile(w, 128 + dx, 128, Terrain.Road);
-      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0 });
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0, npc: true });
       // Add way more than π
       w.addNudge(tank.id, PI * 3);
       w.addNudge(tank.id, PI * 3);
@@ -102,7 +104,7 @@ describe('World turn & aim', () => {
 
     it('addNudge ignores NaN', () => {
       const w = makeWorld();
-      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0 });
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0, npc: true });
       const dirBefore = tank.dir;
       w.addNudge(tank.id, NaN);
       w.setInput(tank.id, { accel: 0, turn: 0, fire: false });
@@ -112,7 +114,7 @@ describe('World turn & aim', () => {
 
     it('addNudge ignores non-finite (Infinity)', () => {
       const w = makeWorld();
-      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0 });
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0, npc: true });
       const dirBefore = tank.dir;
       w.addNudge(tank.id, Infinity);
       w.setInput(tank.id, { accel: 0, turn: 0, fire: false });
@@ -121,15 +123,90 @@ describe('World turn & aim', () => {
     });
   });
 
-  describe('angle wrap', () => {
+  describe('NPC angle wrap', () => {
     it('dir stays in [-π, π] across many continuous-turn ticks', () => {
       const w = makeWorld();
       for (let dx = -5; dx <= 5; dx++) setTile(w, 128 + dx, 128, Terrain.Road);
-      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0 });
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0, npc: true });
       w.setInput(tank.id, { accel: 0, turn: 1, fire: false });
       step(w, null, 200);
       expect(tank.dir).toBeGreaterThanOrEqual(-PI);
       expect(tank.dir).toBeLessThanOrEqual(PI);
+    });
+  });
+
+  // --- Player heading (client-authoritative; server rate-limits via setHeading) ---
+
+  describe('player tank skips server-side turn', () => {
+    it('setInput with turn does not rotate a player tank', () => {
+      const w = makeWorld();
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0 }); // npc: false (default)
+      w.setInput(tank.id, { accel: 0, turn: 1, fire: false });
+      step(w, null, 10);
+      expect(tank.dir).toBe(0); // no change — player heading is client-authoritative
+      expect(tank.turnSpeed).toBe(0);
+    });
+  });
+
+  describe('setHeading rate limit', () => {
+    it('large delta is clamped to turnRate * DT * 1.5', () => {
+      const w = makeWorld();
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0 });
+      const maxStep = TANK_TURN_RATE * DT * 1.5;
+      // Request a 180° turn — should be clamped
+      w.setHeading(tank.id, PI);
+      expect(tank.dir).toBeCloseTo(maxStep, 5);
+      expect(tank.dir).toBeLessThan(PI);
+    });
+
+    it('small delta is applied in full', () => {
+      const w = makeWorld();
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0 });
+      const smallStep = TANK_TURN_RATE * DT * 0.5; // within the clamp
+      w.setHeading(tank.id, smallStep);
+      expect(tank.dir).toBeCloseTo(smallStep, 5);
+    });
+
+    it('setHeading ignores NaN', () => {
+      const w = makeWorld();
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0.5 });
+      w.setHeading(tank.id, NaN);
+      expect(tank.dir).toBe(0.5); // unchanged
+    });
+
+    it('setHeading ignores non-finite (Infinity)', () => {
+      const w = makeWorld();
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0.5 });
+      w.setHeading(tank.id, Infinity);
+      expect(tank.dir).toBe(0.5); // unchanged
+    });
+
+    it('setHeading on missing tank is a no-op', () => {
+      const w = makeWorld();
+      // Should not throw
+      w.setHeading(99999, PI);
+    });
+
+    it('heading normalizes to [-π, π]', () => {
+      const w = makeWorld();
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: PI - 0.01 });
+      // Small positive step pushes past π, should wrap to -π range
+      w.setHeading(tank.id, PI - 0.01 + TANK_TURN_RATE * DT * 0.5);
+      expect(tank.dir).toBeGreaterThanOrEqual(-PI);
+      expect(tank.dir).toBeLessThanOrEqual(PI);
+    });
+
+    it('repeated calls accumulate toward target (drains over multiple ticks)', () => {
+      const w = makeWorld();
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, dir: 0 });
+      const target = 1.0; // ~57°
+      // Each call moves at most turnRate * DT * 1.5 ≈ 0.48 rad
+      const maxPerCall = TANK_TURN_RATE * DT * 1.5;
+      const minCalls = Math.ceil(target / maxPerCall);
+      for (let i = 0; i < minCalls; i++) {
+        w.setHeading(tank.id, target);
+      }
+      expect(tank.dir).toBeCloseTo(target, 1);
     });
   });
 });

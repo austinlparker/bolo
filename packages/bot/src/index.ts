@@ -17,6 +17,8 @@ import {
   MAP_SIZE,
   type ServerMsg,
   SHELL_RANGE,
+  TANK_TURN_RATE,
+  TICK_HZ,
   type TankView,
   Terrain,
   TERRAIN,
@@ -78,12 +80,17 @@ interface BotBrain {
   bases: Base[];
   myTank: TankView | null;
   enemies: TankView[];
+  /** client-authoritative heading, stepped toward target each tick */
+  myDir: number;
   lastSent: string;
 }
 
 function think(b: BotBrain): ClientMsg | null {
   const me = b.myTank;
   if (!me || !me.alive || !b.me) return null;
+
+  // Resync myDir from the server's authoritative heading each state message
+  b.myDir = me.dir;
 
   // nearest enemy in shell range -> fight; else march on a base we don't own
   let target: { x: number; y: number } | null = null;
@@ -114,24 +121,35 @@ function think(b: BotBrain): ClientMsg | null {
   if (!target) return null;
 
   const want = Math.atan2(target.y - me.y, target.x - me.x);
-  let delta = want - me.dir;
+  let delta = want - b.myDir;
   while (delta > Math.PI) delta -= 2 * Math.PI;
   while (delta < -Math.PI) delta += 2 * Math.PI;
 
   // don't drive into buildings or off the island
-  const ax = me.x + Math.cos(me.dir) * 1.5;
-  const ay = me.y + Math.sin(me.dir) * 1.5;
+  const ax = me.x + Math.cos(b.myDir) * 1.5;
+  const ay = me.y + Math.sin(b.myDir) * 1.5;
   const xi = Math.max(0, Math.min(MAP_SIZE - 1, Math.floor(ax)));
   const yi = Math.max(0, Math.min(MAP_SIZE - 1, Math.floor(ay)));
   const ahead = b.terrain[yi * MAP_SIZE + xi] as Terrain;
   const blocked = ahead === Terrain.Building || (ahead === Terrain.DeepSea && !me.onBoat) || TERRAIN[ahead].tankSpeed === 0;
 
-  const turn = blocked ? 1 : delta > 0.07 ? 1 : delta < -0.07 ? -1 : 0;
+  // Step myDir toward target at the turn-rate cap (same physics as the game)
+  const maxStep = TANK_TURN_RATE / TICK_HZ;
+  if (blocked) {
+    // turn right to steer around obstacles
+    b.myDir += maxStep;
+  } else {
+    const step = Math.max(-maxStep, Math.min(maxStep, delta));
+    b.myDir += step;
+  }
+  if (b.myDir > Math.PI) b.myDir -= 2 * Math.PI;
+  else if (b.myDir < -Math.PI) b.myDir += 2 * Math.PI;
+
   const advance = enemy ? enemyD > 3 : true;
   return {
     t: 'input',
     accel: advance || blocked ? 1 : 0,
-    turn,
+    dir: b.myDir,
     fire: fire && Math.abs(delta) < 0.15 && !blocked,
   };
 }
@@ -147,6 +165,7 @@ async function main(): Promise<void> {
     bases: [],
     myTank: null,
     enemies: [],
+    myDir: 0,
     lastSent: '',
   };
 

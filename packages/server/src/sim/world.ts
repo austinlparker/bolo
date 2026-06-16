@@ -11,6 +11,8 @@
  */
 import {
   MAP_SIZE,
+  angleDelta,
+  DT,
   type Faction,
   type Owner,
   type Base,
@@ -344,6 +346,23 @@ export class World implements WorldHost {
     const tank = this.tanks.get(id);
     if (!tank || !Number.isFinite(range)) return;
     tank.gunRange = clamp(range, 1, SHELL_RANGE);
+  }
+
+  /**
+   * Set a player tank's heading from the client's authoritative value.
+   * Rate-limited to turnRate per tick as an anti-cheat safety net —
+   * in normal play the client respects the same limit, so this clamp
+   * never triggers. The 1.5× margin absorbs tick-jitter.
+   */
+  setHeading(id: number, dir: number): void {
+    const tank = this.tanks.get(id);
+    if (!tank || !Number.isFinite(dir)) return;
+    const delta = angleDelta(tank.dir, dir);
+    const maxStep = this.tuning.turnRate * DT * 1.5;
+    const clamped = clamp(delta, -maxStep, maxStep);
+    tank.dir += clamped;
+    if (tank.dir > Math.PI) tank.dir -= 2 * Math.PI;
+    else if (tank.dir < -Math.PI) tank.dir += 2 * Math.PI;
   }
 
   /**

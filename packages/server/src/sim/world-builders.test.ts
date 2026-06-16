@@ -144,6 +144,21 @@ describe('World builders', () => {
       w.builderRecall(tank.id);
       expect(tank.trees).toBe(10); // refunded
     });
+
+    it('wall repair recall refunds COST_WALL_REPAIR, not COST_WALL', () => {
+      // Regression: refundOrder always refunded COST_WALL (2), even for a
+      // repair order on ShotBuilding that only charged COST_WALL_REPAIR (1).
+      const w = makeWorld();
+      for (let dx = -5; dx <= 5; dx++) setTile(w, 128 + dx, 128, Terrain.Grass);
+      setTile(w, 129, 128, Terrain.ShotBuilding);
+      const tank = addTankAt(w, { x: 128.5, y: 128.5, trees: COST_WALL });
+      // Ordering wall repair on ShotBuilding charges COST_WALL_REPAIR (1)
+      expect(w.builderOrder(tank.id, 'wall', 129, 128)).toBeNull();
+      expect(tank.trees).toBe(COST_WALL - COST_WALL_REPAIR); // 2 - 1 = 1
+      // Recall should refund exactly COST_WALL_REPAIR, not COST_WALL
+      w.builderRecall(tank.id);
+      expect(tank.trees).toBe(COST_WALL); // back to 2, not 3
+    });
   });
 
   describe('lifecycle', () => {

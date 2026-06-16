@@ -3,7 +3,9 @@
 JSON text frames over a WebSocket at `wss://<host>/ws`. The same protocol
 serves the web client, external bots, and spectators. Canonical message
 types live in `packages/shared/src/protocol.ts` — this document is the prose
-version. The server simulates at **10 Hz** and is fully authoritative.
+version. The server simulates at **10 Hz**. Position, shells, and collisions
+are server-authoritative; **heading is client-authoritative** (see Input
+below).
 
 ## Authentication
 
@@ -72,13 +74,14 @@ with code 4001 — don't reconnect with the same token.
 
 | message | fields | notes |
 |---|---|---|
-| `input` | `accel`, `turn` ∈ [-1, 1], `fire: bool`, `nudge?: number` | held controls, Bolo-style: applies every tick until replaced. Fractional `turn` enables fine aiming. Positive turn is clockwise (screen space, y-down). Send only on change. `nudge` is a discrete extra rotation in radians (clamped to ±0.35/message), queued server-side and drained at the standard turn rate — lossless fine aiming for tap-style inputs, can't out-turn a held key. |
+| `input` | `accel` ∈ [-1, 1], `dir` ∈ [-π, π] (radians), `fire: bool` | held controls, Bolo-style: applies every tick until replaced. `accel` is a target-speed fraction (the tank cruises toward it). `dir` is the **client-authoritative heading** — the client integrates heading locally using the same turn-rate/accel constants as the server's NPC model and sends the absolute angle. The server trusts it with a rate-limit clamp (`turnRate × dt × 1.5` per call) as an anti-cheat safety net; in normal play the client respects the same limit so the clamp never triggers. NPC tanks use server-authoritative turning (the old `turn` model); player heading comes only from `dir`. |
 | `builder` | `order`, `x`, `y` (tile coords) | dispatch the engineer. `order` ∈ `harvest \| road \| wall \| boat \| pillbox \| mine`. Max range 12 tiles from tank. Costs trees/mines (see below); invalid orders return an `error` frame with the reason. |
 | `builder_recall` | — | abort the current trip; refunds the order's cost |
 | `range` | `range` (tiles) | gun range control, classic Bolo style: shells detonate at this distance. Clamped to [1, SHELL_RANGE] (currently 9). Sticky until changed; your current setting is echoed as `gunRange` on your own `TankView`. |
 | `respawn` | `baseId?` | request respawn at a friendly base (note: auto-respawn at a random friendly base fires 6 s after death; this mainly matters for choosing *where*) |
 | `chat` | `text` (≤240 chars) | global chat |
 | `emote` | `kind` | float an emote bubble over your tank. `kind` ∈ `happy \| angry \| sad \| heart \| laugh \| alert \| question \| sleep`. Rate-limited to one per 1.5 s; broadcast to everyone as `emoted { tankId, kind }`. |
+| `bounty` | `targetDid` | escalate a bounty: adds +1 to the bonus reward on the target's bounty. Only eligible hunters may escalate; one escalation per player per bounty; bonus capped at 3. |
 | `ping` | `n` | server echoes `pong` with same `n` |
 
 ### Builder orders & costs
@@ -109,6 +112,15 @@ tank 30 s later.
 - `spectate` (1 Hz, spectators) — every tank, all pills/bases, war info,
   terrain deltas, online counts. No mines, full visibility.
 - `chat`, `emoted`, `war_over`, `new_war` (a fresh `welcome` follows), `pong`, `error`.
+- `bounty_active` — sent on connect and whenever the active bounty set changes
+  (created, claimed, expired, escalated, or cleared at war start). Contains
+  `bounties: [{ targetDid, targetHandle, reward, victimHandle }]`. An empty
+  array means no bounties are live.
+- `bounty_claimed` — broadcast when a hunter kills a bounty target. Contains
+  `targetDid`, `targetHandle`, `claimerDid`, `claimerHandle`, `reward`. The
+  reward (base + escalations) is added as bonus kill credits to the claimer.
+- `social_data`, `mutuals` — atproto identity enrichment and follow-graph
+  updates for the connected player.
 
 ## Stats & leaderboard
 
@@ -119,6 +131,25 @@ the web leaderboard at `/leaderboard` enriches rows with live atproto
 identity (avatars/display names from the public AppView, linking to
 bsky.app). With `DEV_AUTH=1`, `POST /api/dev/seed` injects test
 profiles/history for UI work.
+
+## Bounties
+
+When a tank kills another player who is a mutual follow (both following each
+other on Bluesky), a **bounty** is automatically placed on the killer. All
+connected mutuals of the victim become **hunters** — eligible to claim the
+bounty by killing the target.
+
+- **Base reward:** +1 bonus kill credit (on top of the kill itself).
+- **Escalation:** any hunter may send `bounty { targetDid }` to add +1 to the
+  bonus reward. One escalation per player per bounty; bonus capped at +3.
+- **TTL:** bounties expire after 5 minutes (3000 ticks) if unclaimed.
+- **Claiming:** when a hunter kills the bounty target, the total reward (base +
+  escalations) is credited as bonus kills. The reward is added to exactly one
+  ledger (the live tank's kills, persisted via `foldStats` on war end).
+- **Visibility:** `TankView.bounty` is `true` when the tank is a bounty target
+  for the viewing player. `bounty_active` broadcasts the full target list;
+  `bounty_claimed` announces each claim to everyone.
+- **War reset:** bounties are cleared at the start of each new war.
 
 ## Terrain enum
 

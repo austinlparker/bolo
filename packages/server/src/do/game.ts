@@ -23,10 +23,6 @@ import {
   TICK_HZ,
   TICK_MS,
   type WarRecord,
-  BOUNTY_AUTO_REWARD,
-  BOUNTY_TTL_TICKS,
-  BOUNTY_MAX_ESCALATION,
-  type Bounty,
 } from '@bolo/shared';
 import { verifyToken } from '../auth';
 import { type Env, sessionSecret } from '../env';
@@ -34,6 +30,7 @@ import { NpcController } from '../sim/npc';
 import { World } from '../sim/world';
 import { StatsSink } from '../stats';
 import { fetchProfiles, computeMutuals } from '../social';
+import { BountyManager } from './bounty-manager';
 import { SessionStore, type Session } from './session-store';
 import { ViewBuilder } from './view-builder';
 import { WarManager } from './war-manager';
@@ -55,10 +52,9 @@ export class GameDO implements DurableObject {
   private world: World | null = null;
   private store = new SessionStore();
   private war = new WarManager();
-  private views = new ViewBuilder(this.store, this.war.profiles, (did: string) => this.computeNemesis(did), (viewerDid: string, targetDid: string) => this.isBountyTargetFor(viewerDid, targetDid));
+  private bounty = new BountyManager(this.war.profiles, this.store);
+  private views = new ViewBuilder(this.store, this.war.profiles, (did: string) => this.computeNemesis(did), (viewerDid: string, targetDid: string) => this.bounty.isBountyTargetFor(viewerDid, targetDid));
   private npc = new NpcController();
-  /** active bounties keyed by target DID */
-  private bounties = new Map<string, Bounty>();
   private phase: 'active' | 'intermission' = 'active';
   private nextWarAt: number | null = null;
   /**
@@ -357,7 +353,7 @@ export class GameDO implements DurableObject {
     // runs a debounced refresh within 5s instead.
     this.socialRefreshPending = true;
     // send current active bounties
-    this.sendBountiesTo(session);
+    this.bounty.sendBountiesTo(session);
     this.startTicking();
   }
 
@@ -509,175 +505,7 @@ export class GameDO implements DurableObject {
     return { did: nemesisDid, handle: nemesisProfile.handle, killedBy, youKilled, online };
   }
 
-  // ---------- bounties ----------
-
-  /** Check if viewerDid can claim a bounty on targetDid. */
-  private isBountyTargetFor(viewerDid: string, targetDid: string): boolean {
-    const bounty = this.bounties.get(targetDid);
-    return !!bounty && bounty.hunters.includes(viewerDid);
-  }
-
-  /**
-   * Create a bounty when a mutual kill occurs. The killer becomes the target;
-   * all connected mutuals of the victim become hunters.
-   */
-  private createBounty(killerDid: string, killerHandle: string, victimDid: string, world: { tanks: Map<number, { did: string; id: number }> }): void {
-    // don't stack bounties on the same target
-    if (this.bounties.has(killerDid)) {
-      // refresh TTL and add more hunters
-      const existing = this.bounties.get(killerDid)!;
-      for (const s of this.store) {
-        if (s.did && s.mutuals.has(victimDid) && !existing.hunters.includes(s.did)) {
-          existing.hunters.push(s.did);
-        }
-      }
-      return;
-    }
-    // collect hunters: all connected mutuals of the victim
-    const hunters: string[] = [];
-    for (const s of this.store) {
-      if (s.did && s.mutuals.has(victimDid)) hunters.push(s.did);
-    }
-    if (hunters.length === 0) return;
-    // find the target's tank id
-    let targetTankId = 0;
-    for (const tank of world.tanks.values()) {
-      if (tank.did === killerDid) { targetTankId = tank.id; break; }
-    }
-    this.bounties.set(killerDid, {
-      targetDid: killerDid,
-      targetHandle: killerHandle,
-      targetTankId,
-      hunters,
-      baseReward: BOUNTY_AUTO_REWARD,
-      bonusReward: 0,
-      createdAtTick: world instanceof Map ? 0 : (this.world?.tick ?? 0),
-      victimDid,
-      escalatedBy: [],
-    });
-  }
-
-  /**
-   * Check for bounty claims from kill events and award rewards.
-   * Returns claim notifications to broadcast.
-   */
-  private checkBountyClaims(events: { e: string; killerDid?: string; victimDid?: string; killer?: string; victim?: string }[]): { targetDid: string; targetHandle: string; claimerDid: string; claimerHandle: string; reward: number }[] {
-    const claims: { targetDid: string; targetHandle: string; claimerDid: string; claimerHandle: string; reward: number }[] = [];
-    for (const ev of events) {
-      if (ev.e !== 'kill' || !ev.victimDid || !ev.killerDid) continue;
-      const bounty = this.bounties.get(ev.victimDid);
-      if (!bounty) continue;
-      if (!bounty.hunters.includes(ev.killerDid)) continue;
-      // bounty claimed!
-      const reward = bounty.baseReward + bounty.bonusReward;
-      const claimerProfile = this.profiles.get(ev.killerDid);
-      const claimerHandle = claimerProfile?.handle ?? ev.killer ?? 'unknown';
-      // award bonus kills to the claimer's profile
-      if (claimerProfile) {
-        claimerProfile.kills += reward;
-      }
-      // also add to the claimer's live tank stats if connected
-      for (const s of this.store) {
-        if (s.did === ev.killerDid && s.tankId !== undefined) {
-          const tank = this.world?.tanks.get(s.tankId);
-          if (tank) tank.kills += reward;
-          break;
-        }
-      }
-      claims.push({
-        targetDid: bounty.targetDid,
-        targetHandle: bounty.targetHandle,
-        claimerDid: ev.killerDid,
-        claimerHandle,
-        reward,
-      });
-      this.bounties.delete(ev.victimDid);
-    }
-    return claims;
-  }
-
-  /** Remove expired bounties. */
-  private expireBounties(): void {
-    if (!this.world) return;
-    for (const [did, bounty] of this.bounties) {
-      if (this.world.tick - bounty.createdAtTick > BOUNTY_TTL_TICKS) {
-        this.bounties.delete(did);
-      }
-    }
-  }
-
-  /** Broadcast the current bounty list to all players. */
-  private broadcastBounties(): void {
-    if (this.bounties.size === 0) {
-      this.store.broadcast({ t: 'bounty_active', bounties: [] });
-      return;
-    }
-    const bounties = [];
-    for (const bounty of this.bounties.values()) {
-      const victimProfile = this.profiles.get(bounty.victimDid);
-      bounties.push({
-        targetDid: bounty.targetDid,
-        targetHandle: bounty.targetHandle,
-        reward: bounty.baseReward + bounty.bonusReward,
-        victimHandle: victimProfile?.handle ?? 'unknown',
-      });
-    }
-    this.store.broadcast({ t: 'bounty_active', bounties });
-  }
-
-  /** Send current bounties to a specific session (on connect). */
-  private sendBountiesTo(session: Session): void {
-    if (this.bounties.size === 0) return;
-    const bounties = [];
-    for (const bounty of this.bounties.values()) {
-      const victimProfile = this.profiles.get(bounty.victimDid);
-      bounties.push({
-        targetDid: bounty.targetDid,
-        targetHandle: bounty.targetHandle,
-        reward: bounty.baseReward + bounty.bonusReward,
-        victimHandle: victimProfile?.handle ?? 'unknown',
-      });
-    }
-    this.store.send(session, { t: 'bounty_active', bounties });
-  }
-
-  /**
-   * Process bounty lifecycle: create bounties from mutual kills, check claims,
-   * and expire old bounties. Broadcasts claims and updates.
-   */
-  private processBounties(events: { e: string; killerDid?: string; victimDid?: string; killer?: string; victim?: string }[]): void {
-    // expire old bounties
-    const sizeBefore = this.bounties.size;
-    this.expireBounties();
-
-    // create bounties from mutual kills
-    for (const ev of events) {
-      if (ev.e !== 'kill' || !ev.killerDid || !ev.victimDid) continue;
-      // check if the victim has mutuals who are connected (potential hunters)
-      let hasHunter = false;
-      for (const s of this.store) {
-        if (s.did && s.mutuals.has(ev.victimDid)) { hasHunter = true; break; }
-      }
-      if (hasHunter) {
-        this.createBounty(ev.killerDid, ev.killer!, ev.victimDid, this.world!);
-      }
-    }
-
-    // check for claims
-    const claims = this.checkBountyClaims(events);
-    for (const claim of claims) {
-      this.store.broadcast({
-        t: 'bounty_claimed',
-        ...claim,
-      });
-      this.store.broadcastChat('system', `💰 BOUNTY CLAIMED: @${claim.claimerHandle} → @${claim.targetHandle} +${claim.reward}`);
-    }
-
-    // broadcast bounty list if it changed
-    if (claims.length > 0 || this.bounties.size !== sizeBefore) {
-      this.broadcastBounties();
-    }
-  }
+  // Bounty logic lives in BountyManager (this.bounty). See bounty-manager.ts.
 
   private handleMessage(session: Session, msg: ClientMsg): void {
     const world = this.world!;
@@ -704,17 +532,7 @@ export class GameDO implements DurableObject {
     }
     if (msg.t === 'bounty') {
       if (!session.did) return;
-      const bounty = this.bounties.get(msg.targetDid);
-      if (!bounty) return;
-      // only hunters can escalate
-      if (!bounty.hunters.includes(session.did)) return;
-      // one escalation per player per bounty
-      if (bounty.escalatedBy.includes(session.did)) return;
-      // cap total bonus
-      if (bounty.bonusReward >= BOUNTY_MAX_ESCALATION) return;
-      bounty.bonusReward++;
-      bounty.escalatedBy.push(session.did);
-      this.broadcastBounties();
+      this.bounty.escalate(session.did, msg.targetDid);
       return;
     }
     if (session.role !== 'player' || session.tankId === undefined || this.phase !== 'active') {
@@ -725,12 +543,11 @@ export class GameDO implements DurableObject {
       case 'input':
         world.setInput(session.tankId, {
           accel: clamp1(msg.accel),
-          turn: clamp1(msg.turn),
+          turn: 0, // unused for player tanks (heading is client-authoritative)
           fire: !!msg.fire,
         });
-        // fine-aim tap: clamp each message's nudge to one tick's worth of turn
-        if (typeof msg.nudge === 'number' && Number.isFinite(msg.nudge)) {
-          world.addNudge(session.tankId, clamp1(msg.nudge / 0.35) * 0.35);
+        if (typeof msg.dir === 'number' && Number.isFinite(msg.dir)) {
+          world.setHeading(session.tankId, msg.dir);
         }
         break;
       case 'builder': {
@@ -813,7 +630,7 @@ export class GameDO implements DurableObject {
     const extraEvents = this.processRivalries(result.events);
 
     // bounty system: create bounties from mutual kills, check claims, expire
-    this.processBounties(result.events);
+    this.bounty.processBounties(result.events, this.world!);
 
     if (this.statsSink.enabled && result.stats.length) {
       const { players } = this.store.playerSpectatorCounts();
@@ -936,6 +753,10 @@ export class GameDO implements DurableObject {
     const old = this.world!;
     this.world = this.war.startNewWar(old, this.store);
     this.npc.reset(); // the new World restarts tank ids at 1; drop stale AI memory
+    // Clear bounties from the previous war. The new world's tick starts at 0,
+    // so old bounties with high createdAtTick values would survive expiry math
+    // (tick - createdAtTick would be negative, never exceeding TTL).
+    this.bounty.clear();
     this.phase = 'active';
     this.nextWarAt = null;
     this.npc.balanceNpcs(this.world);

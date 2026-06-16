@@ -9,6 +9,9 @@ import { fetchProfiles } from './social';
 
 export { GameDO } from './do/game';
 
+/** Maximum DIDs allowed in a single /api/profiles request. */
+const MAX_PROFILE_LOOKUPS = 50;
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -54,9 +57,14 @@ export default {
     }
 
     if (url.pathname === '/api/regenerate') {
+      // Fail closed: if ADMIN_SECRET is not configured, the endpoint is
+      // disabled entirely. This prevents "Bearer undefined" from matching
+      // when env.ADMIN_SECRET is unset.
+      if (!env.ADMIN_SECRET) {
+        return json({ error: 'regenerate disabled' }, 403);
+      }
       const auth = request.headers.get('Authorization');
-      const token = url.searchParams.get('token');
-      if (auth !== `Bearer ${env.ADMIN_SECRET}` && token !== env.ADMIN_SECRET) {
+      if (auth !== `Bearer ${env.ADMIN_SECRET}`) {
         return json({ error: 'unauthorized' }, 403);
       }
       const res = await world().fetch(new Request(new URL('/regenerate', url.origin)));
@@ -64,8 +72,11 @@ export default {
     }
 
     if (url.pathname === '/api/profiles' && request.method === 'GET') {
-      const dids = url.searchParams.getAll('dids').filter(Boolean);
+      const dids = [...new Set(url.searchParams.getAll('dids').filter(Boolean))];
       if (dids.length === 0) return json({ profiles: {} });
+      if (dids.length > MAX_PROFILE_LOOKUPS) {
+        return json({ error: `too many dids (max ${MAX_PROFILE_LOOKUPS})` }, 400);
+      }
       const profiles = await fetchProfiles(dids, env);
       const obj: Record<string, { handle: string; displayName?: string; avatar?: string; description?: string }> = {};
       for (const [did, p] of profiles) {
