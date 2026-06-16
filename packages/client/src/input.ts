@@ -10,8 +10,10 @@ import type { GameState } from './state';
 export interface KeyboardTuning {
   /** radians per fine-aim tap; see InputMsg.nudge */
   fineNudge: number;
-  /** a turn key held longer than this becomes continuous full-rate turning */
-  holdMs: number;
+  /** radians per shift+tap (finer for pixel-precise aiming) */
+  fineNudgeShift: number;
+  /** how fast turnValue ramps 0→1 per second (full lock in ~1/rate seconds) */
+  turnRampRate: number;
   /** cruise units changed per second while W/S (throttle up/down) is held */
   throttleRate: number;
 }
@@ -20,7 +22,8 @@ export interface KeyboardTuning {
 // max gun range — playtest: "fine adjustment is too sensitive on keyboard".
 export const DEFAULT_KEYBOARD_TUNING: KeyboardTuning = {
   fineNudge: 0.03,
-  holdMs: 170,
+  fineNudgeShift: 0.015,
+  turnRampRate: 6,
   throttleRate: 1.3,
 };
 
@@ -31,10 +34,11 @@ const TURN_KEYS: Record<string, -1 | 1> = { KeyA: -1, ArrowLeft: -1, KeyD: 1, Ar
 
 export class Input {
   private held = new Set<string>();
-  private heldSince = new Map<string, number>();
   private last: InputMsg = { t: 'input', accel: 0, turn: 0, fire: false };
   /** persistent throttle (cruise) in [-1, 1]; W/S nudge it, it holds; X stops. */
   private cruise = 0;
+  /** current fractional turn [-1, 1]; ramps toward target while a key is held */
+  private turnValue = 0;
   private lastNow = 0;
   private gameState: GameState;
   private doSend!: () => void;
@@ -60,23 +64,18 @@ export class Input {
       net.send({ t: 'builder', order: hud.tool, x, y });
     };
 
-    // a quick tap on a turn key is a precise nudge; only a real hold engages
-    // continuous turning (otherwise one 10Hz server tick of full-rate turn
-    // — 18° — is the smallest possible aim adjustment)
-    const heldPast = (code: string) =>
-      this.held.has(code) && performance.now() - (this.heldSince.get(code) ?? 0) >= KEYBOARD_TUNING.holdMs;
-
+    // turn is a ramping value: a quick tap yields a tiny rotation plus a nudge,
+    // a hold ramps up to full-rate turn over ~167ms. The server's turn-accel
+    // model smooths it further. No binary threshold or timer needed.
     const send = (nudge?: number) => {
       // accel is the held cruise level (integrated in tick), not momentary W/S
       const accel = Math.round(this.cruise * 100) / 100;
-      const left = heldPast('KeyA') || heldPast('ArrowLeft');
-      const right = heldPast('KeyD') || heldPast('ArrowRight');
-      const turn = left && !right ? -1 : right && !left ? 1 : 0;
+      const turn = Math.round(this.turnValue * 100) / 100;
       const fire = this.held.has('Space');
       const msg: InputMsg = { t: 'input', accel, turn, fire };
       // feed the prediction model so the client can dead-reckon your own
       // tank without waiting for the server round-trip
-      this.gameState.myInput = { accel: msg.accel, turn: msg.turn, fire: msg.fire };
+      this.gameState.recordInput(accel, turn, fire, nudge);
       const changed = msg.accel !== this.last.accel || msg.turn !== this.last.turn || msg.fire !== this.last.fire;
       if (changed || nudge !== undefined) {
         this.last = msg;
@@ -181,9 +180,9 @@ export class Input {
       const dir = TURN_KEYS[ev.code];
       if (dir && !ev.repeat) {
         this.held.add(ev.code);
-        this.heldSince.set(ev.code, performance.now());
-        send(dir * KEYBOARD_TUNING.fineNudge); // instant fine tap...
-        setTimeout(send, KEYBOARD_TUNING.holdMs + 10); // ...then full turn if still held
+        // shift+tap = half the nudge for pixel-precise aiming
+        const nudgeSize = ev.shiftKey ? KEYBOARD_TUNING.fineNudgeShift : KEYBOARD_TUNING.fineNudge;
+        send(dir * nudgeSize); // instant fine tap; the ramp in tick() handles holds
         return;
       }
       this.held.add(ev.code);
@@ -192,13 +191,16 @@ export class Input {
 
     addEventListener('keyup', (ev) => {
       this.held.delete(ev.code);
-      this.heldSince.delete(ev.code);
+      // instant stop when all turn keys are released (matches server: release = instant)
+      const left = this.held.has('KeyA') || this.held.has('ArrowLeft');
+      const right = this.held.has('KeyD') || this.held.has('ArrowRight');
+      if (!left && !right && this.turnValue !== 0) this.turnValue = 0;
       send();
     });
 
     addEventListener('blur', () => {
       this.held.clear();
-      this.heldSince.clear();
+      this.turnValue = 0;
       send();
     });
 
@@ -252,27 +254,48 @@ export class Input {
   }
 
   /**
-   * Integrate the throttle each frame: W/S (or ↑/↓) ramp the persistent cruise
-   * up/down and it holds when released; death resets it. Call from the render
-   * loop. Turn and fire stay event-driven (handled in the constructor).
+   * Integrate throttle and turn each frame. Throttle (W/S) ramps the
+   * persistent cruise up/down and it holds when released. Turn (A/D)
+   * ramps from 0 toward ±1 — a quick tap yields a small rotation plus
+   * the keydown nudge, a hold builds to full-rate turn. Death resets both.
+   * Call from the render loop.
    */
   tick(now: number): void {
     const dt = this.lastNow ? Math.min(0.1, (now - this.lastNow) / 1000) : 0;
     this.lastNow = now;
     const me = this.gameState.me();
     if (!me || !me.alive) {
-      if (this.cruise !== 0) {
+      if (this.cruise !== 0 || this.turnValue !== 0) {
         this.cruise = 0;
+        this.turnValue = 0;
         this.doSend();
       }
       return;
     }
+    // --- throttle: ramp cruise toward held direction ---
     const up = this.held.has('KeyW') || this.held.has('ArrowUp');
     const down = this.held.has('KeyS') || this.held.has('ArrowDown');
-    const dir = (up ? 1 : 0) - (down ? 1 : 0);
-    if (dir !== 0) {
-      this.cruise = Math.max(-1, Math.min(1, this.cruise + dir * KEYBOARD_TUNING.throttleRate * dt));
+    const thrDir = (up ? 1 : 0) - (down ? 1 : 0);
+    if (thrDir !== 0) {
+      this.cruise = Math.max(-1, Math.min(1, this.cruise + thrDir * KEYBOARD_TUNING.throttleRate * dt));
       this.doSend();
+    }
+    // --- turn: ramp turnValue toward target (proportional control) ---
+    const left = this.held.has('KeyA') || this.held.has('ArrowLeft');
+    const right = this.held.has('KeyD') || this.held.has('ArrowRight');
+    const targetTurn = (right ? 1 : 0) - (left ? 1 : 0);
+    if (targetTurn !== 0) {
+      // reversal restarts the ramp (matches server: instant on direction change)
+      if (Math.sign(targetTurn) !== Math.sign(this.turnValue) && this.turnValue !== 0) {
+        this.turnValue = 0;
+      }
+      const diff = targetTurn - this.turnValue;
+      const step = KEYBOARD_TUNING.turnRampRate * dt;
+      const newVal = Math.abs(diff) <= step ? targetTurn : this.turnValue + Math.sign(diff) * step;
+      if (newVal !== this.turnValue) {
+        this.turnValue = newVal;
+        this.doSend();
+      }
     }
   }
 }

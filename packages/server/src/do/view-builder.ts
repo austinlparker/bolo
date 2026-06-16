@@ -102,6 +102,7 @@ export class ViewBuilder {
         y: round2(tank.y),
         dir: round2(tank.dir),
         speed: round2(tank.speed),
+        turnSpeed: round2(tank.turnSpeed),
         alive: tank.alive,
         onBoat: tank.onBoat,
       };

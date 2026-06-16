@@ -8,6 +8,7 @@ import {
   base64ToBytes,
   type Base,
   type BuilderView,
+  DT,
   type GameEvent,
   MAP_SIZE,
   type Pillbox,
@@ -48,6 +49,13 @@ export interface InterpTank {
  * buffer instead of freezing motion until the next packet lands.
  */
 const RENDER_DELAY_MS = TICK_MS * 2;
+
+/** Drift above this (tiles) is a teleport/respawn — snap immediately. */
+const HARD_SNAP_THRESHOLD = 1.5;
+/** Spread residual prediction error over this many ms (~6 frames at 60fps). */
+const ERROR_DECAY_MS = 100;
+/** Max entries in the input replay ring buffer (~3s at 10Hz). */
+const MAX_INPUT_BUFFER = 30;
 
 export interface Boom {
   x: number;
@@ -95,12 +103,28 @@ export class GameState {
   myInput: { accel: number; turn: number; fire: boolean } = { accel: 0, turn: 0, fire: false };
   /**
    * Predicted state for the player's own tank: last authoritative snapshot
-   * position/dir/speed from the server, integrated forward by current input
+   * position/dir/speed from the server, integrated forward by replayed inputs
    * each frame so the camera and own-tank sprite react instantly.
    */
-  private pred: { x: number; y: number; dir: number; speed: number; turnSpeed: number; at: number } | null = null;
+  private pred: { x: number; y: number; dir: number; speed: number; turnSpeed: number; onBoat: boolean; at: number } | null = null;
   /** performance.now() of the last server snapshot used to seed prediction */
   private predSeedAt = 0;
+  /** true when a new server snapshot requires re-seed + input replay */
+  private predDirty = false;
+  /** ring buffer of recent inputs, tagged with estimated server tick */
+  private inputBuffer: Array<{ tick: number; accel: number; turn: number; fire: boolean; nudge: number }> = [];
+  /** last server tick acknowledged (from the most recent StateMsg) */
+  private lastAckTick = 0;
+  /** performance.now() when the last server snapshot arrived */
+  private lastSnapshotAt = 0;
+  /** local nudge queue for prediction (mirrors server's host.nudges) */
+  private predNudges = 0;
+  /** error-decay correction buffers (residual drift spread over ERROR_DECAY_MS) */
+  private errorX = 0;
+  private errorY = 0;
+  private errorDir = 0;
+  private errorSpeed = 0;
+  private errorTurnSpeed = 0;
   /**
    * Terrain change tracking with multiple consumers (main view + minimap
    * caches): a version bump means "repaint everything"; the log appends
@@ -162,9 +186,11 @@ export class GameState {
       } else {
         this.tanks.set(tv.id, { cur: tv, snaps: [{ view: tv, at: now }] });
       }
-      // reconcile prediction when our own tank's snapshot arrives
+      // mark prediction dirty when our own tank's snapshot arrives
       if (this.you && tv.id === this.you.tankId) {
-        this.reconcilePrediction(tv, now);
+        this.lastAckTick = msg.tick;
+        this.lastSnapshotAt = now;
+        this.predDirty = true;
       }
     }
     for (const id of [...this.tanks.keys()]) {
@@ -249,6 +275,20 @@ export class GameState {
   }
 
   /**
+   * Record a local input (from keyboard or touch) for client-side prediction.
+   * Pushes to the input replay buffer and feeds the local nudge queue so the
+   * crosshair moves instantly without waiting for server confirmation.
+   */
+  recordInput(accel: number, turn: number, fire: boolean, nudge?: number): void {
+    this.myInput = { accel, turn, fire };
+    const now = performance.now();
+    const tick = this.lastAckTick + Math.floor((now - this.lastSnapshotAt) / TICK_MS);
+    this.inputBuffer.push({ tick, accel, turn, fire, nudge: nudge ?? 0 });
+    if (this.inputBuffer.length > MAX_INPUT_BUFFER) this.inputBuffer.shift();
+    if (nudge) this.predNudges += nudge;
+  }
+
+  /**
    * Interpolated position for rendering: finds the two snapshots bracketing
    * (now - RENDER_DELAY_MS) and lerps between them, so arrival jitter
    * reshapes the timeline instead of freezing it.
@@ -277,50 +317,128 @@ export class GameState {
   }
 
   /**
-   * Predicted position for the player's OWN tank: dead-reckon from the last
-   * server snapshot using the current input, integrating forward to `now`.
-   * This gives instant visual response to controls without waiting for the
-   * server round-trip + render delay. Other tanks still use lerpTank().
+   * Predicted position for the player's OWN tank, using input-replay
+   * (Gambetta's model): on each server snapshot, re-seed from authoritative
+   * state and replay the local input buffer forward to `now`. Between
+   * snapshots, continue integrating with the latest input. Residual drift
+   * (from unmodeled collisions etc.) is spread over ERROR_DECAY_MS instead
+   * of snapping. This gives instant visual response to controls — including
+   * fine-aim nudges — without waiting for the server round-trip.
    */
   predictedSelf(now: number): { x: number; y: number; dir: number } {
     const snap = this.me();
     if (!snap || !this.you || !snap.alive) {
-      // no tank or dead: reset prediction, fall back to interpolation
       this.pred = null;
+      this.errorX = this.errorY = this.errorDir = this.errorSpeed = this.errorTurnSpeed = 0;
       const it = this.you ? this.tanks.get(this.you.tankId) : undefined;
       return it ? this.lerpTank(it, now) : { x: MAP_SIZE / 2, y: MAP_SIZE / 2, dir: 0 };
     }
-    if (!this.pred) {
-      // seed from latest server snapshot
-      this.pred = { x: snap.x, y: snap.y, dir: snap.dir, speed: snap.speed, turnSpeed: 0, at: now };
-      this.predSeedAt = now;
-    }
-    // integrate forward from the last frame to now
-    if (this.pred.at < now) {
-      // step in small increments for stability (server uses DT = 1/TICK_HZ)
-      const stepDt = 1 / 10; // 100ms steps matching server tick
-      let remaining = (now - this.pred.at) / 1000;
-      while (remaining > 0) {
-        const dt = Math.min(stepDt, remaining);
-        this.predStep(dt);
-        remaining -= dt;
+
+    // Frame dt for error decay (captured before pred.at is overwritten)
+    const frameDt = this.pred ? Math.min(0.1, (now - this.pred.at) / 1000) : 0;
+
+    if (this.predDirty || !this.pred) {
+      // --- Re-seed from server snapshot + replay inputs (Gambetta's model) ---
+
+      // Capture old display position (pred + error) so the renderer doesn't jump
+      const oldX = this.pred ? this.pred.x + this.errorX : snap.x;
+      const oldY = this.pred ? this.pred.y + this.errorY : snap.y;
+      const oldDir = this.pred ? this.pred.dir + this.errorDir : snap.dir;
+
+      // Re-seed from authoritative server state
+      this.pred = {
+        x: snap.x, y: snap.y, dir: snap.dir,
+        speed: snap.speed, turnSpeed: snap.turnSpeed ?? 0,
+        onBoat: snap.onBoat, at: this.lastSnapshotAt,
+      };
+      this.predSeedAt = this.lastSnapshotAt;
+
+      // Re-accumulate nudges from unacknowledged buffer entries
+      this.predNudges = 0;
+      for (const entry of this.inputBuffer) {
+        if (entry.tick > this.lastAckTick && entry.nudge) this.predNudges += entry.nudge;
       }
-      this.pred.at = now;
+
+      // Replay inputs from lastSnapshotAt to now, stepping in server-tick increments
+      if (this.pred.at < now) {
+        let remaining = (now - this.pred.at) / 1000;
+        while (remaining > 0) {
+          const dt = Math.min(DT, remaining);
+          const stepMs = now - remaining * 1000;
+          const stepTick = this.lastAckTick + Math.floor((stepMs - this.lastSnapshotAt) / TICK_MS);
+          this.predStep(dt, this.lookupInput(stepTick));
+          remaining -= dt;
+        }
+        this.pred.at = now;
+      }
+
+      // Drop acknowledged buffer entries (server has already processed them)
+      this.inputBuffer = this.inputBuffer.filter((e) => e.tick > this.lastAckTick);
+
+      // Compute residual error: old display position vs new prediction.
+      // Display starts at oldDisplay and decays toward the new pred over
+      // ERROR_DECAY_MS, so corrections are smooth rather than snapping.
+      const newPred = this.pred;
+      const drift = Math.hypot(oldX - newPred.x, oldY - newPred.y);
+      if (drift > HARD_SNAP_THRESHOLD) {
+        // Catastrophic drift (teleport, respawn): snap immediately, no smoothing
+        this.errorX = this.errorY = this.errorDir = 0;
+      } else {
+        this.errorX = oldX - newPred.x;
+        this.errorY = oldY - newPred.y;
+        this.errorDir = angleDelta(newPred.dir, oldDir);
+      }
+
+      this.predDirty = false;
+    } else {
+      // --- Continue integrating from the last frame to now ---
+      if (this.pred.at < now) {
+        let remaining = (now - this.pred.at) / 1000;
+        while (remaining > 0) {
+          const dt = Math.min(DT, remaining);
+          this.predStep(dt, this.myInput);
+          remaining -= dt;
+        }
+        this.pred.at = now;
+      }
     }
-    return { x: this.pred.x, y: this.pred.y, dir: this.pred.dir };
+
+    // --- Error decay: spread residual correction over ERROR_DECAY_MS ---
+    const correction = Math.min(1, frameDt / (ERROR_DECAY_MS / 1000));
+    this.errorX *= 1 - correction;
+    this.errorY *= 1 - correction;
+    this.errorDir *= 1 - correction;
+
+    return {
+      x: this.pred.x + this.errorX,
+      y: this.pred.y + this.errorY,
+      dir: this.pred.dir + this.errorDir,
+    };
+  }
+
+  /**
+   * Find the input that was active at a given estimated server tick.
+   * Scans the buffer backward for the latest entry at or before stepTick.
+   */
+  private lookupInput(stepTick: number): { accel: number; turn: number; fire: boolean } {
+    for (let i = this.inputBuffer.length - 1; i >= 0; i--) {
+      if (this.inputBuffer[i].tick <= stepTick) {
+        const e = this.inputBuffer[i];
+        return { accel: e.accel, turn: e.turn, fire: e.fire };
+      }
+    }
+    return this.myInput;
   }
 
   /**
    * One integration step replicating the server's tank movement model
-   * (tank-system.ts): rotational inertia + terrain-agnostic accel toward
-   * target speed. Collision/terrain checks are omitted (we can't know the
-   * authoritative terrain state from here without full replication); the
-   * server corrects any divergence when the next snapshot arrives.
+   * (tank-system.ts): rotational inertia + nudge draining + terrain-aware
+   * accel + building/sea collision. Collision prediction eliminates most
+   * position snaps when driving into walls.
    */
-  private predStep(dt: number): void {
+  private predStep(dt: number, input: { accel: number; turn: number; fire: boolean }): void {
     if (!this.pred) return;
     const p = this.pred;
-    const input = this.myInput;
 
     // --- turning: same inertia model as tank-system.ts ---
     const targetRate = Math.max(-1, Math.min(1, input.turn)) * TANK_TURN_RATE;
@@ -332,13 +450,19 @@ export class GameState {
         ? Math.min(targetRate, p.turnSpeed + TANK_TURN_ACCEL * dt)
         : Math.max(targetRate, p.turnSpeed - TANK_TURN_ACCEL * dt);
     }
-    p.dir += p.turnSpeed * dt;
+
+    // held turn + queued fine-aim nudges share one per-tick rotation budget
+    // (mirrors server's tank-system.ts nudge draining)
+    const turnStep = p.turnSpeed * dt;
+    const budget = TANK_TURN_RATE * dt - Math.abs(turnStep);
+    const nudgeStep = Math.max(-budget, Math.min(budget, this.predNudges));
+    this.predNudges -= nudgeStep;
+    p.dir += turnStep + nudgeStep;
     if (p.dir > Math.PI) p.dir -= 2 * Math.PI;
     else if (p.dir < -Math.PI) p.dir += 2 * Math.PI;
 
     // --- speed: accel toward target speed fraction (terrain-aware) ---
-    const onBoat = false; // client prediction doesn't model boat state transitions
-    const maxSpeed = this.terrainMaxSpeed(p.x, p.y, onBoat);
+    const maxSpeed = this.terrainMaxSpeed(p.x, p.y, p.onBoat);
     const target = input.accel >= 0
       ? input.accel * maxSpeed
       : input.accel * maxSpeed * TANK_REVERSE_FACTOR;
@@ -349,10 +473,28 @@ export class GameState {
     if (p.speed < target) p.speed = Math.min(target, p.speed + rate * dt);
     else if (p.speed > target) p.speed = Math.max(target, p.speed - rate * dt);
 
-    // --- movement ---
+    // --- movement + collision (mirrors server's tank-system.ts) ---
     if (p.speed !== 0) {
-      p.x += Math.cos(p.dir) * p.speed * dt;
-      p.y += Math.sin(p.dir) * p.speed * dt;
+      const nx = p.x + Math.cos(p.dir) * p.speed * dt;
+      const ny = p.y + Math.sin(p.dir) * p.speed * dt;
+      const xi = Math.floor(nx);
+      const yi = Math.floor(ny);
+      if (xi >= 0 && yi >= 0 && xi < MAP_SIZE && yi < MAP_SIZE) {
+        const nextTile = this.terrain[yi * MAP_SIZE + xi] as Terrain;
+        const hereTile = this.terrain[Math.floor(p.y) * MAP_SIZE + Math.floor(p.x)] as Terrain;
+        const blocked =
+          nextTile === Terrain.Building ||
+          (!p.onBoat && nextTile === Terrain.DeepSea && hereTile !== Terrain.DeepSea);
+        if (blocked) {
+          p.speed = 0;
+        } else {
+          p.x = Math.max(0.5, Math.min(MAP_SIZE - 0.5, nx));
+          p.y = Math.max(0.5, Math.min(MAP_SIZE - 0.5, ny));
+        }
+      } else {
+        p.x = Math.max(0.5, Math.min(MAP_SIZE - 0.5, nx));
+        p.y = Math.max(0.5, Math.min(MAP_SIZE - 0.5, ny));
+      }
     }
   }
 
@@ -383,38 +525,6 @@ export class GameState {
       }
     }
     return TANK_MAX_SPEED * terrainSpeed;
-  }
-
-  /**
-   * Reconcile prediction with authoritative server state: snap to the
-   * server position when a new snapshot arrives for our own tank. The
-   * prediction continues forward from there on the next frame.
-   */
-  private reconcilePrediction(tv: TankView, now: number): void {
-    if (!this.pred) return;
-    // snap to server position; keep predicted turnSpeed/speed as those are
-    // continuously integrated. A large jump (wall hit we didn't predict)
-    // is absorbed immediately.
-    const dx = tv.x - this.pred.x;
-    const dy = tv.y - this.pred.y;
-    const drift = Math.hypot(dx, dy);
-    if (drift > 0.75) {
-      // large correction: snap hard
-      this.pred.x = tv.x;
-      this.pred.y = tv.y;
-      this.pred.dir = tv.dir;
-      this.pred.speed = tv.speed;
-    } else {
-      // small drift: blend toward server (absorb smoothly over ~2 frames)
-      const blend = 0.5;
-      this.pred.x += dx * blend;
-      this.pred.y += dy * blend;
-      // angle: take the shorter way
-      const da = angleDelta(this.pred.dir, tv.dir);
-      this.pred.dir += da * blend;
-      this.pred.speed += (tv.speed - this.pred.speed) * blend;
-    }
-    this.pred.at = now;
   }
 }
 

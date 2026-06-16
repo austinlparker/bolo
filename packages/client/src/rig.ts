@@ -263,22 +263,18 @@ export function startRig(root: HTMLElement): void {
     });
   });
 
-  // ---------- shared keyboard input, production tap/hold semantics ----------
+  // ---------- shared keyboard input, ramping-turn semantics ----------
   const held = new Set<string>();
-  const heldSince = new Map<string, number>();
   const TURN_KEYS: Record<string, -1 | 1> = { KeyA: -1, ArrowLeft: -1, KeyD: 1, ArrowRight: 1 };
+  /** current fractional turn [-1, 1]; ramps toward target while a key is held */
+  let turnValue = 0;
   /** inputs delayed by the latency knob, like a round trip to the DO */
   const queue: { at: number; input: TankInput; nudge?: number }[] = [];
   const latency = (): number => Number((root.querySelector('#rig-latency') as HTMLSelectElement).value);
 
-  const heldPast = (code: string): boolean =>
-    held.has(code) && performance.now() - (heldSince.get(code) ?? 0) >= KEYBOARD_TUNING.holdMs;
-
   const send = (nudge?: number): void => {
     const accel = held.has('KeyW') || held.has('ArrowUp') ? 1 : held.has('KeyS') || held.has('ArrowDown') ? -1 : 0;
-    const left = heldPast('KeyA') || heldPast('ArrowLeft');
-    const right = heldPast('KeyD') || heldPast('ArrowRight');
-    const turn = left && !right ? -1 : right && !left ? 1 : 0;
+    const turn = Math.round(turnValue * 100) / 100;
     queue.push({ at: performance.now() + latency(), input: { accel, turn, fire: held.has('Space') }, nudge });
   };
 
@@ -287,9 +283,8 @@ export function startRig(root: HTMLElement): void {
     const dir = TURN_KEYS[ev.code];
     if (dir && !ev.repeat) {
       held.add(ev.code);
-      heldSince.set(ev.code, performance.now());
-      send(dir * KEYBOARD_TUNING.fineNudge);
-      setTimeout(() => send(), KEYBOARD_TUNING.holdMs + 10);
+      const nudgeSize = ev.shiftKey ? KEYBOARD_TUNING.fineNudgeShift : KEYBOARD_TUNING.fineNudge;
+      send(dir * nudgeSize);
       return;
     }
     if (!ev.repeat) {
@@ -299,11 +294,14 @@ export function startRig(root: HTMLElement): void {
   });
   addEventListener('keyup', (ev) => {
     held.delete(ev.code);
-    heldSince.delete(ev.code);
+    const left = held.has('KeyA') || held.has('ArrowLeft');
+    const right = held.has('KeyD') || held.has('ArrowRight');
+    if (!left && !right) turnValue = 0;
     send();
   });
   addEventListener('blur', () => {
     held.clear();
+    turnValue = 0;
     send();
   });
 
@@ -399,6 +397,21 @@ export function startRig(root: HTMLElement): void {
 
   const loop = (now: number): void => {
     requestAnimationFrame(loop);
+    const frameDt = Math.min(0.1, (now - last) / 1000);
+    // ramp turn value toward held target (proportional control)
+    const left = held.has('KeyA') || held.has('ArrowLeft');
+    const right = held.has('KeyD') || held.has('ArrowRight');
+    const targetTurn = (right ? 1 : 0) - (left ? 1 : 0);
+    if (targetTurn !== 0) {
+      if (Math.sign(targetTurn) !== Math.sign(turnValue) && turnValue !== 0) turnValue = 0;
+      const diff = targetTurn - turnValue;
+      const step = KEYBOARD_TUNING.turnRampRate * frameDt;
+      const newVal = Math.abs(diff) <= step ? targetTurn : turnValue + Math.sign(diff) * step;
+      if (newVal !== turnValue) {
+        turnValue = newVal;
+        send();
+      }
+    }
     acc += now - last;
     last = now;
     while (acc >= TICK_MS) {

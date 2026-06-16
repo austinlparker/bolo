@@ -199,7 +199,10 @@ export class TouchControls {
     if (fireChanged || settled || (moved && now - this.lastSentAt > SEND_MIN_INTERVAL)) {
       this.lastSent = { accel, turn, fire };
       this.lastSentAt = now;
-      this.net.send({ t: 'input', accel, turn: Math.round(turn * 100) / 100, fire });
+      const turnRounded = Math.round(turn * 100) / 100;
+      this.net.send({ t: 'input', accel, turn: turnRounded, fire });
+      // feed the prediction model so the client can dead-reckon (same as keyboard)
+      state.recordInput(accel, turnRounded, fire);
     }
   }
 

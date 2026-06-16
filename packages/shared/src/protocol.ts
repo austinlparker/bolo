@@ -12,7 +12,7 @@ import type { Base, BuilderOrderKind, Pillbox, PlayerProfile, Tank, WarInfo, War
  * (deploys iterate fast and stale tabs otherwise play a skewed protocol —
  * an early playtester's whole first session was an unversioned old bundle).
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 // ---------- client -> server ----------
 
@@ -115,6 +115,8 @@ export interface TankView {
   y: number;
   dir: number;
   speed: number;
+  /** current turn rate, radians/sec (for client-side prediction reconciliation) */
+  turnSpeed: number;
   alive: boolean;
   onBoat: boolean;
   /** only present for YOUR tank */
