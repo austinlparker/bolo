@@ -284,7 +284,13 @@ export class Input {
     const left = this.held.has('KeyA') || this.held.has('ArrowLeft');
     const right = this.held.has('KeyD') || this.held.has('ArrowRight');
     const targetTurn = (right ? 1 : 0) - (left ? 1 : 0);
-    if (targetTurn !== 0) {
+    if (targetTurn === 0) {
+      // no turn input (or both keys = cancel): instant stop
+      if (this.turnValue !== 0) {
+        this.turnValue = 0;
+        this.doSend();
+      }
+    } else {
       // reversal restarts the ramp (matches server: instant on direction change)
       if (Math.sign(targetTurn) !== Math.sign(this.turnValue) && this.turnValue !== 0) {
         this.turnValue = 0;

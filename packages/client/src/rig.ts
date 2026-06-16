@@ -402,7 +402,9 @@ export function startRig(root: HTMLElement): void {
     const left = held.has('KeyA') || held.has('ArrowLeft');
     const right = held.has('KeyD') || held.has('ArrowRight');
     const targetTurn = (right ? 1 : 0) - (left ? 1 : 0);
-    if (targetTurn !== 0) {
+    if (targetTurn === 0) {
+      if (turnValue !== 0) { turnValue = 0; send(); }
+    } else {
       if (Math.sign(targetTurn) !== Math.sign(turnValue) && turnValue !== 0) turnValue = 0;
       const diff = targetTurn - turnValue;
       const step = KEYBOARD_TUNING.turnRampRate * frameDt;
