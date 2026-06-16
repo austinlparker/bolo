@@ -164,9 +164,32 @@ export class GameDO implements DurableObject {
     if (url.pathname === '/status') {
       const world = this.world!;
       const { players, spectators } = this.store.playerSpectatorCounts();
+
+      // Merge live session stats (kills/caps/deaths on the Tank object) into
+      // the persistent profile stats. foldStats only runs on disconnect or
+      // war end, so without this the leaderboard is stale for connected
+      // players — their current-session performance wouldn't show up.
+      const liveStats = new Map<string, { kills: number; deaths: number; caps: number }>();
+      for (const session of this.store) {
+        if (session.role !== 'player' || session.tankId === undefined || !session.did) continue;
+        const tank = world.tanks.get(session.tankId);
+        if (tank) liveStats.set(session.did, { kills: tank.kills, deaths: tank.deaths, caps: tank.caps });
+      }
+
       const leaderboard = [...this.war.profiles.values()]
+        .map((p) => {
+          const live = liveStats.get(p.did);
+          if (!live) return p;
+          return { ...p, kills: p.kills + live.kills, deaths: p.deaths + live.deaths, caps: p.caps + live.caps };
+        })
         .filter((p) => p.kills + p.caps > 0)
-        .sort((a, b) => b.kills + b.caps * 3 - (a.kills + a.caps * 3))
+        .sort((a, b) => {
+          const dr = b.kills + b.caps * 3 - (a.kills + a.caps * 3);
+          if (dr !== 0) return dr;
+          // tiebreaker: fewer deaths first (same rating, more efficient), then earlier veteran
+          if (a.deaths !== b.deaths) return a.deaths - b.deaths;
+          return a.firstSeen - b.firstSeen;
+        })
         .slice(0, 50);
       return Response.json({
         war: world.warInfo(this.phase, this.nextWarAt),
