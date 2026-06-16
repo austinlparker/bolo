@@ -47,7 +47,7 @@ import {
   TREES_PER_FOREST_TILE,
 } from '@bolo/shared';
 import type { Base, Pillbox, Tank } from '@bolo/shared';
-import type { TankInput, World } from './world';
+import type { TankInput, World, StatEvent } from './world';
 
 const NPC_NAMES = [
   'patrol', 'lancer', 'bastion', 'vanguard', 'sentry', 'warden',
@@ -93,6 +93,12 @@ interface AiMemory {
   /** remaining dodge ticks; when > 0, override steering to dodge shells */
   dodgeTicks: number;
   dodgeDir: number;
+  /** telemetry: which decision branch think() took this tick */
+  decision: string;
+  /** base being actively sieged; remembered across resupply trips so the NPC
+   *  returns to finish a damaged base instead of picking a fresh one */
+  siegeTargetId: number;
+  siegeTargetHp: number;
 }
 
 // --- Team awareness context ---
@@ -106,11 +112,12 @@ interface TeamAwareness {
 }
 
 // Humanizers: garrison bots aimed with perfect server-side information and
-// fired the same tick a target entered range — telemetry showed a 52% bot
-// hit rate vs 7-10% for humans, and a 12:1 kill ratio. A beat of reaction
-// time plus a wandering aim error keeps them dangerous but beatable.
-const NPC_REACTION_TICKS = Math.round(TICK_HZ * 0.6);
-const NPC_AIM_SPREAD = 0.12; // radians; ~7° max error, resampled at 2Hz
+// fired the same tick a target entered range — telemetry showed a 76% bot
+// hit rate vs 39% for humans. A beat of reaction time plus a wandering aim
+// error keeps them dangerous but beatable. Spread and reaction time were
+// raised from 0.12/0.6s after the 76% rate proved too dominant.
+const NPC_REACTION_TICKS = Math.round(TICK_HZ * 0.85);
+const NPC_AIM_SPREAD = 0.22; // radians; ~12.6° max error, resampled at 2Hz
 // After A* fails to reach a goal overland, skip re-selecting it for this long.
 // Kept short (15s) so budget-exhausted paths retry soon — many "unreachable"
 // results are the search hitting MAX_EXPANSIONS, not truly impassable terrain.
@@ -163,6 +170,8 @@ export class NpcController {
   private heap = new TypedMinHeap(MAX_EXPANSIONS * 4 + 16);
   // Team awareness, rebuilt each tick by preTick()
   private team: TeamAwareness | null = null;
+  // NPC behavioral telemetry, drained by the game DO after the think loop
+  npcStats: StatEvent[] = [];
   // Spatial index of alive tanks — available for proximity queries.
   // Currently the shell system uses its own internal grid (built post-physics);
   // this index is built pre-physics during preTick for NPC awareness queries.
@@ -270,6 +279,7 @@ export class NpcController {
     }
     if (mem.dodgeTicks > 0) {
       mem.dodgeTicks--;
+      mem.decision = 'dodge';
       return {
         accel: 1,
         turn: mem.dodgeDir,
@@ -281,10 +291,29 @@ export class NpcController {
     const retreating = this.checkThreatRetreat(world, tank);
     if (retreating) {
       // Act like we need supply: skip combat, head for a friendly base
+      mem.decision = 'retreat';
       return this.navigateStrategic(world, tank, mem, true);
     }
 
-    const needSupply = tank.shells < 5 || tank.armor < 15;
+    // --- Siege commitment: if we're actively bombarding a base, don't bail
+    //     just because shells dipped below 5. Keep firing until we're out,
+    //     so we can actually finish a damaged base instead of retreating and
+    //     letting it fully regenerate during the round trip. ---
+    let inBombardRange = false;
+    if (mem.siegeTargetId >= 0) {
+      const siegeBase = world.bases.find((b) => b.id === mem.siegeTargetId);
+      if (!siegeBase || siegeBase.owner === 'neutral' || siegeBase.owner === tank.faction || siegeBase.hp <= 0) {
+        mem.siegeTargetId = -1; // base fell neutral or was captured — siege complete
+      } else {
+        mem.siegeTargetHp = siegeBase.hp;
+        const sdx = siegeBase.x + 0.5 - tank.x;
+        const sdy = siegeBase.y + 0.5 - tank.y;
+        inBombardRange = sdx * sdx + sdy * sdy < (SHELL_RANGE * 0.9) ** 2;
+      }
+    }
+    const committed = inBombardRange && tank.shells > 0;
+
+    const needSupply = (tank.shells < (committed ? 1 : 5)) || tank.armor < 15;
 
     if (!needSupply) {
       // 1) duel the nearest visible enemy tank in range
@@ -322,6 +351,7 @@ export class NpcController {
           mem.aimJitterTick = world.tick;
           mem.aimJitter = (Math.random() * 2 - 1) * NPC_AIM_SPREAD;
         }
+        mem.decision = 'duel';
         return steerAndShoot(
           world, tank, enemy.x, enemy.y, realDsq > 9, acquired && tank.shells > 0, mem.aimJitter,
         );
@@ -343,6 +373,7 @@ export class NpcController {
       }
       const pillDist = Math.sqrt(pillD);
       if (pill && tank.shells > 2) {
+        mem.decision = 'pill';
         return steerAndShoot(world, tank, pill.x + 0.5, pill.y + 0.5, pillDist > PILL_RANGE * 0.8, true);
       }
     }
@@ -377,6 +408,17 @@ export class NpcController {
 
   // --- Threat assessment: returns true if we should retreat ---
   private checkThreatRetreat(world: World, tank: Tank): boolean {
+    // Don't retreat if we're already at a friendly base — hold the line and
+    // defend. Retreating from your own supply pad just sends you back to the
+    // same base in a perpetual camp loop.
+    const refuelRsq = BASE_REFUEL_RADIUS * BASE_REFUEL_RADIUS;
+    for (const b of world.bases) {
+      if (b.owner !== tank.faction) continue;
+      const dx = b.x + 0.5 - tank.x;
+      const dy = b.y + 0.5 - tank.y;
+      if (dx * dx + dy * dy <= refuelRsq) return false;
+    }
+
     let nearbyFriendlies = 0;
     let nearbyEnemies = 0;
     for (const other of world.tanks.values()) {
@@ -479,6 +521,7 @@ export class NpcController {
     if (this.team && !resupplying) {
       const defended = this.findSiegedBase(world, tank);
       if (defended) {
+        mem.decision = 'defend';
         return this.driveToBase(world, tank, mem, defended);
       }
     }
@@ -496,6 +539,9 @@ export class NpcController {
       const dy = b.y + 0.5 - tank.y;
       const d = Math.sqrt(dx * dx + dy * dy);
       let bias = !resupplying && b.owner !== 'neutral' ? 40 : 0; // prefer free real estate
+      // Siege persistence: strongly prefer returning to a base we've already
+      // damaged so we finish it off instead of spreading fire across many bases.
+      if (!resupplying && mem.siegeTargetId === b.id) bias -= 80;
       // Goal spreading: penalize goals other friendlies are already heading toward
       const goalKey = `base:${b.id}:${b.owner}`;
       const teammates = this.team?.friendlyPositions.get(tank.faction) ?? [];
@@ -511,7 +557,7 @@ export class NpcController {
         goal = b;
       }
     }
-    if (!goal) return { accel: 0, turn: 0, fire: false };
+    if (!goal) { mem.decision = 'idle'; return { accel: 0, turn: 0, fire: false }; }
 
     // bombard an enemy base's fortifications until it falls neutral
     const gdx = goal.x + 0.5 - tank.x;
@@ -519,14 +565,18 @@ export class NpcController {
     const goalDsq = gdx * gdx + gdy * gdy;
     if (!resupplying && goal.owner !== 'neutral' && goal.hp > 0 && goalDsq < (SHELL_RANGE * 0.9) ** 2) {
       const goalD = Math.sqrt(goalDsq);
+      mem.siegeTargetId = goal.id; // remember across resupply trips
+      mem.decision = 'bombard';
       return steerAndShoot(world, tank, goal.x + 0.5, goal.y + 0.5, goalD > 4, tank.shells > 0);
     }
 
     // --- Boat building sub-goal state machine ---
     if (!tank.onBoat && mem.builderGoal.kind !== 'none') {
+      mem.decision = 'builder';
       return this.handleBuilderGoal(world, tank, mem);
     }
 
+    mem.decision = resupplying ? 'resupply' : 'attack';
     return this.driveToGoal(world, tank, mem, goal, resupplying);
   }
 
@@ -807,6 +857,70 @@ export class NpcController {
     this._spatial.clear();
   }
 
+  /**
+   * Emit periodic NPC behavioral telemetry. Called once per tick after the
+   * think() loop. Each NPC emits every ~5s, staggered by tank.id to avoid
+   * all NPCs emitting on the same tick.
+   */
+  emitState(world: World): void {
+    const period = TICK_HZ * 5; // 5 seconds
+    for (const tank of world.tanks.values()) {
+      if (!tank.alive || !tank.npc) continue;
+      if (world.tick % period !== tank.id % period) continue;
+      const mem = this.memories.get(tank.id);
+      if (!mem) continue;
+
+      // Parse goal info from goalKey ("base:<id>:<owner>" or other)
+      let goalOwner: string | undefined;
+      let distToGoal: number | undefined;
+      if (mem.goalKey.startsWith('base:')) {
+        const parts = mem.goalKey.split(':');
+        goalOwner = parts[2];
+        // find the base to measure distance
+        const baseId = Number(parts[1]);
+        const base = world.bases.find((b) => b.id === baseId);
+        if (base) {
+          const dx = base.x + 0.5 - tank.x;
+          const dy = base.y + 0.5 - tank.y;
+          distToGoal = Math.round(Math.sqrt(dx * dx + dy * dy) * 10) / 10;
+        }
+      }
+
+      // Is the tank currently within refuel range of a friendly base?
+      const refuelRsq = BASE_REFUEL_RADIUS * BASE_REFUEL_RADIUS;
+      let atFriendlyBase = false;
+      for (const b of world.bases) {
+        if (b.owner !== tank.faction) continue;
+        const dx = b.x + 0.5 - tank.x;
+        const dy = b.y + 0.5 - tank.y;
+        if (dx * dx + dy * dy <= refuelRsq) { atFriendlyBase = true; break; }
+      }
+
+      this.npcStats.push({
+        name: 'npc_state',
+        faction: tank.faction,
+        decision: mem.decision || 'unknown',
+        goal_key: mem.goalKey || undefined,
+        goal_owner: goalOwner,
+        dist_to_goal: distToGoal,
+        shells: tank.shells,
+        armor: tank.armor,
+        at_friendly_base: atFriendlyBase,
+        on_boat: tank.onBoat,
+        stuck: mem.stuckTicks > TICK_HZ * 2,
+        path_failed: mem.path.length === 0 && mem.goalKey.startsWith('base:'),
+      });
+    }
+  }
+
+  /** Drain accumulated NPC stats so the game DO can ship them. */
+  drainStats(): StatEvent[] {
+    if (this.npcStats.length === 0) return [];
+    const out = this.npcStats;
+    this.npcStats = [];
+    return out;
+  }
+
   private getMemory(tank: Tank): AiMemory {
     let mem = this.memories.get(tank.id);
     if (!mem) {
@@ -831,6 +945,9 @@ export class NpcController {
         lastHarvestTick: -Infinity,
         dodgeTicks: 0,
         dodgeDir: 0,
+        decision: '',
+        siegeTargetId: -1,
+        siegeTargetHp: 0,
       };
       this.memories.set(tank.id, mem);
     }

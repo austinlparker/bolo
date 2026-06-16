@@ -746,6 +746,7 @@ export class GameDO implements DurableObject {
     for (const tank of world.tanks.values()) {
       if (tank.npc) world.setInput(tank.id, this.npc.think(world, tank));
     }
+    this.npc.emitState(world);
 
     // War age is SIMULATED time, not wall-clock: the sim freezes when no socket
     // is connected, so wall-clock would jump warMinutes forward across an idle
@@ -764,7 +765,8 @@ export class GameDO implements DurableObject {
 
     if (this.statsSink.enabled && result.stats.length) {
       const { players } = this.store.playerSpectatorCounts();
-      for (const ev of result.stats) {
+      const allStats = [...result.stats, ...this.npc.drainStats()];
+      for (const ev of allStats) {
         this.statsSink.push({
           ...ev,
           war_number: world.warNumber,
