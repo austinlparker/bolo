@@ -180,6 +180,22 @@ export class GameDO implements DurableObject {
       });
     }
 
+    if (url.pathname === '/regenerate') {
+      // Debug: generate a fresh map with a new seed and restart the war.
+      const oldWar = this.world?.warNumber ?? 0;
+      this.world = new World(oldWar + 1, (Date.now() ^ 0xb010b010) >>> 0);
+      this.npc.reset();
+      this.phase = 'active';
+      this.nextWarAt = null;
+      this.npc.balanceNpcs(this.world);
+      this.store.broadcast({ t: 'new_war', war: this.world.warInfo('active', null) });
+      for (const session of this.store) {
+        this.store.send(session, this.views.welcomeFor(this.world, session, this.phase, this.nextWarAt));
+      }
+      void this.persist();
+      return Response.json({ ok: true, warNumber: this.world.warNumber, seed: this.world.seed });
+    }
+
     return new Response('not found', { status: 404 });
   }
 

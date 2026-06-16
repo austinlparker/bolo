@@ -139,6 +139,12 @@ const NEIGHBORS = [
   [1, 0], [-1, 0], [0, 1], [0, -1],
 ] as const;
 
+/** Full 3×3 ring around a tile (cardinal + diagonal) for perimeter walls. */
+const WALL_RING = [
+  [1, 0], [-1, 0], [0, 1], [0, -1],
+  [1, 1], [1, -1], [-1, 1], [-1, -1],
+] as const;
+
 // Squared constants for hot-path distance comparisons (avoids Math.hypot)
 const SHELL_RANGE_SQ = SHELL_RANGE * SHELL_RANGE;
 const SHELL_THREAT_RANGE_SQ = 36; // 6² — shell dodge detection range
@@ -482,7 +488,7 @@ export class NpcController {
             }
             // Only wall if at least 2 exits will remain open
             if (blockedExits < 2) {
-              for (const [dx, dy] of NEIGHBORS) {
+              for (const [dx, dy] of WALL_RING) {
                 const wx = friendlyBase.x + dx;
                 const wy = friendlyBase.y + dy;
                 if (wx < 0 || wy < 0 || wx >= MAP_SIZE || wy >= MAP_SIZE) continue;
