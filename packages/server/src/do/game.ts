@@ -184,6 +184,7 @@ export class GameDO implements DurableObject {
   }
 
   async alarm(): Promise<void> {
+    console.log('[alarm] fire, ticking:', this.ticking, 'sessions:', this.store.size);
     await this.loaded;
 
     // Game tick (alarm-driven loop): simulate one tick, then reschedule if
@@ -246,7 +247,16 @@ export class GameDO implements DurableObject {
           return;
         }
         helloed = true;
-        void this.handleHello(session, msg.token, msg.role === 'player' ? 'player' : 'spectator', msg.client);
+        this.handleHello(session, msg.token, msg.role === 'player' ? 'player' : 'spectator', msg.client).catch(
+          (err) => {
+            console.error('[ws] handleHello failed:', err);
+            try {
+              this.store.send(session, { t: 'error', code: 'bad_message', msg: String(err?.message ?? err) });
+            } catch {
+              /* socket may already be closed */
+            }
+          },
+        );
         return;
       }
       if (--session.msgBudget < 0) return; // silently drop floods
@@ -285,6 +295,7 @@ export class GameDO implements DurableObject {
     role: 'player' | 'spectator',
     client?: string,
   ): Promise<void> {
+    console.log('[hello] start', role);
     const world = this.world!;
     // Capacity guard (closes the unauthenticated-spectator flood vector). Reject
     // before auth/addTank so an over-cap socket never enters the tick loop.
@@ -323,6 +334,7 @@ export class GameDO implements DurableObject {
       session.role = 'spectator';
     }
     this.store.add(session);
+    console.log('[hello] sending welcome, phase:', this.phase, 'sessions:', this.store.size);
     this.store.send(session, this.views.welcomeFor(world, session, this.phase, this.nextWarAt));
     this.store.broadcastChat('system', `${session.handle ?? 'a spectator'} ${role === 'player' ? 'joined the war' : 'is watching'}`);
     // Defer social data fetching out of the connect path entirely.
@@ -334,6 +346,7 @@ export class GameDO implements DurableObject {
     // send current active bounties
     this.sendBountiesTo(session);
     this.startTicking();
+    console.log('[hello] done, ticking:', this.ticking);
   }
 
   // ---------- social ----------
