@@ -45,6 +45,8 @@ export class Renderer {
   /** fading tread-mark decals stamped behind moving tanks */
   private trackMarks: { x: number; y: number; dir: number; at: number }[] = [];
   private lastTrack = new Map<number, { x: number; y: number }>();
+  /** cache of loaded Bluesky avatar images (keyed by URL) */
+  private avatarImgs = new Map<string, HTMLImageElement>();
   private dpr = 1;
   /** viewport size in CSS pixels */
   private vw = 0;
@@ -266,6 +268,18 @@ export class Renderer {
     }
   }
 
+  /** Returns a loaded avatar image for a URL, or null while still loading. */
+  private avatarImg(url: string): HTMLImageElement | null {
+    let img = this.avatarImgs.get(url);
+    if (!img) {
+      img = new Image();
+      img.onload = () => { /* image is now cached; next frame picks it up */ };
+      img.src = url;
+      this.avatarImgs.set(url, img);
+    }
+    return img.complete && img.naturalWidth > 0 ? img : null;
+  }
+
   /** Stamp tread marks behind moving tanks and draw them fading out. */
   private drawTracks(
     state: GameState,
@@ -376,16 +390,34 @@ export class Renderer {
     ctx.font = '10px monospace';
     ctx.textAlign = 'center';
     const tw = ctx.measureText(label).width;
+    // avatar lookup (skip NPCs — no Bluesky profile)
+    const avUrl = !t.npc && t.did ? state.socialProfiles[t.did]?.avatar : undefined;
+    const avImg = avUrl ? this.avatarImg(avUrl) : null;
+    const avSize = 10;
+    const avW = avImg ? avSize + 3 : 0;
+    const totalW = tw + avW;
     ctx.fillStyle = 'rgba(7,8,12,0.55)';
-    ctx.fillRect(px - tw / 2 - 3, py - r - 14, tw + 6, 11);
+    ctx.fillRect(px - totalW / 2 - 3, py - r - 14, totalW + 6, 11);
+    // avatar as a small circle to the left of the handle
+    if (avImg) {
+      const avCx = px - totalW / 2 + avSize / 2;
+      const avCy = py - r - 8.5;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(avCx, avCy, avSize / 2, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(avImg, avCx - avSize / 2, avCy - avSize / 2, avSize, avSize);
+      ctx.restore();
+    }
     ctx.fillStyle = isMe ? '#ffffff' : body;
-    ctx.fillText(label, px, py - r - 5.5);
+    ctx.fillText(label, px + avW / 2, py - r - 5.5);
 
     // mutual marker: small green dot above mutual tanks
     if (t.mutual) {
       ctx.fillStyle = '#6c8';
       ctx.beginPath();
-      ctx.arc(px + tw / 2 + 6, py - r - 9, 3, 0, Math.PI * 2);
+      ctx.arc(px + totalW / 2 + 6, py - r - 9, 3, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -394,7 +426,7 @@ export class Renderer {
       ctx.save();
       ctx.fillStyle = '#e8c75d';
       ctx.beginPath();
-      ctx.arc(px - tw / 2 - 8, py - r - 9, 5, 0, Math.PI * 2);
+      ctx.arc(px - totalW / 2 - 8, py - r - 9, 5, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = '#a06b1c';
       ctx.lineWidth = 1.5;
@@ -403,7 +435,7 @@ export class Renderer {
       ctx.font = 'bold 8px monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('$', px - tw / 2 - 8, py - r - 9);
+      ctx.fillText('$', px - totalW / 2 - 8, py - r - 9);
       ctx.restore();
     }
 

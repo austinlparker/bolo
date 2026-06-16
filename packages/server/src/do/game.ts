@@ -180,60 +180,10 @@ export class GameDO implements DurableObject {
       });
     }
 
-    if (url.pathname === '/debug') {
-      const alarm = await this.state.storage.getAlarm();
-      return Response.json({
-        ticking: this.ticking,
-        tickCounter: this.tickCounter,
-        storeSize: this.store.size,
-        phase: this.phase,
-        socialRefreshPending: this.socialRefreshPending,
-        alarmAt: alarm ? new Date(alarm).toISOString() : null,
-        now: new Date().toISOString(),
-        worldTick: this.world?.tick ?? null,
-      });
-    }
-
-    if (url.pathname === '/restart-ticking') {
-      // Emergency unstuck: cancel any stale alarm, reset flags, and
-      // schedule a fresh one. The alarm delivery can get wedged when
-      // old floating I/O (pre-fix social fetches) leaves the input gate
-      // blocked — a fresh setAlarm from a clean invocation kicks it.
-      await this.state.storage.deleteAlarm();
-      this.ticking = false;
-      this.socialRefreshPending = this.store.size > 0;
-      this.lastSocialRefreshTick = this.tickCounter;
-      this.startTicking();
-      const alarm = await this.state.storage.getAlarm();
-      return Response.json({
-        ok: true,
-        ticking: this.ticking,
-        alarmAt: alarm ? new Date(alarm).toISOString() : null,
-        now: new Date().toISOString(),
-      });
-    }
-
-    if (url.pathname === '/force-restart') {
-      // Nuclear option: the alarm delivery is wedged at the runtime level
-      // and can't be fixed from code. Close all connections, delete the
-      // alarm, and let the DO evict from memory. The next connection
-      // creates a fresh DO instance with working alarm delivery.
-      console.log('[force-restart] closing all sessions and clearing alarm');
-      for (const s of this.store) {
-        try { s.ws.close(4003, 'force restart'); } catch {}
-      }
-      await this.state.storage.deleteAlarm();
-      this.ticking = false;
-      this.tickCounter = 0;
-      this.store.clear();
-      return Response.json({ ok: true, msg: 'DO will evict and restart on next connection' });
-    }
-
     return new Response('not found', { status: 404 });
   }
 
   async alarm(): Promise<void> {
-    console.log('[alarm] fire, ticking:', this.ticking, 'sessions:', this.store.size);
     await this.loaded;
 
     // Game tick (alarm-driven loop): simulate one tick, then reschedule if
@@ -344,7 +294,6 @@ export class GameDO implements DurableObject {
     role: 'player' | 'spectator',
     client?: string,
   ): Promise<void> {
-    console.log('[hello] start', role);
     const world = this.world!;
     // Capacity guard (closes the unauthenticated-spectator flood vector). Reject
     // before auth/addTank so an over-cap socket never enters the tick loop.
@@ -383,7 +332,6 @@ export class GameDO implements DurableObject {
       session.role = 'spectator';
     }
     this.store.add(session);
-    console.log('[hello] sending welcome, phase:', this.phase, 'sessions:', this.store.size);
     this.store.send(session, this.views.welcomeFor(world, session, this.phase, this.nextWarAt));
     this.store.broadcastChat('system', `${session.handle ?? 'a spectator'} ${role === 'player' ? 'joined the war' : 'is watching'}`);
     // Defer social data fetching out of the connect path entirely.
@@ -395,7 +343,6 @@ export class GameDO implements DurableObject {
     // send current active bounties
     this.sendBountiesTo(session);
     this.startTicking();
-    console.log('[hello] done, ticking:', this.ticking);
   }
 
   // ---------- social ----------

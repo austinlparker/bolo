@@ -33,10 +33,6 @@ export class SessionStore {
     return this.sessions.delete(s);
   }
 
-  clear(): void {
-    this.sessions.clear();
-  }
-
   has(s: Session): boolean {
     return this.sessions.has(s);
   }
