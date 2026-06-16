@@ -42,6 +42,7 @@ import {
   idx,
   MineState,
   Terrain,
+  TERRAIN,
 } from '@bolo/shared';
 import type { WorldHost } from './world-host';
 import { resetAccumulators } from './context';
@@ -398,8 +399,12 @@ export class World implements WorldHost {
       base = friendly[Math.floor(Math.random() * friendly.length)];
     }
     if (base) {
-      tank.x = base.x + 0.5 + (Math.random() * 2 - 1);
-      tank.y = base.y + 0.5 + (Math.random() * 2 - 1);
+      // Spawn near the base — but never on an impassable tile. Fortification
+      // walls (Building, tankSpeed 0) around a base would permanently trap a
+      // tank dropped on top of them, so search for a drivable spot.
+      const [sx, sy] = this.findSpawnTile(base.x, base.y);
+      tank.x = sx;
+      tank.y = sy;
       tank.onBoat = false;
     } else {
       // Bolo-style: come ashore on a boat from your faction's corner of the sea
@@ -410,6 +415,33 @@ export class World implements WorldHost {
     }
     tank.dir = Math.atan2(W / 2 - tank.y, W / 2 - tank.x);
     tank.speed = 0;
+  }
+
+  /**
+   * Find a drivable spawn position near a base. Tries random spots in the
+   * base's 3×3 vicinity first (to spread spawns out, like the original), then
+   * spirals outward to guarantee a passable tile — so a tank never spawns
+   * entombed in walls or water. Returns [x, y] in tile-center float coords.
+   */
+  private findSpawnTile(bx: number, by: number): [number, number] {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const tx = bx + (Math.floor(Math.random() * 3) - 1);
+      const ty = by + (Math.floor(Math.random() * 3) - 1);
+      if (tx < 0 || ty < 0 || tx >= MAP_SIZE || ty >= MAP_SIZE) continue;
+      if (TERRAIN[this.terrain[idx(tx, ty)] as Terrain].tankSpeed > 0) return [tx + 0.5, ty + 0.5];
+    }
+    for (let r = 0; r <= 6; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const nx = bx + dx;
+          const ny = by + dy;
+          if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
+          if (TERRAIN[this.terrain[idx(nx, ny)] as Terrain].tankSpeed > 0) return [nx + 0.5, ny + 0.5];
+        }
+      }
+    }
+    return [bx + 0.5, by + 0.5];
   }
 
   respawn(id: number, baseId?: number): void {

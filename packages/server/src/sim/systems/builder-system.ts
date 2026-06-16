@@ -230,10 +230,24 @@ export class BuilderSystem {
         } else this.refundOrder(tank);
         break;
       case 'wall':
-        if (canBuildOn(t)) {
-          this.host.setTerrain(o.tx, o.ty, Terrain.Building);
-          tank.wallsBuilt++;
-        } else this.refundOrder(tank);
+        if (!canBuildOn(t)) {
+          this.refundOrder(tank);
+          break;
+        }
+        // Never entomb a tank: a tank on a Building tile is permanently
+        // immobilized (tankSpeed 0, no way to build speed to leave). If any
+        // tank currently occupies this tile, abort and refund rather than
+        // drop the wall on top of it.
+        if (
+          [...this.host.tanks.values()].some(
+            (tk) => tk.alive && Math.floor(tk.x) === o.tx && Math.floor(tk.y) === o.ty,
+          )
+        ) {
+          this.refundOrder(tank);
+          break;
+        }
+        this.host.setTerrain(o.tx, o.ty, Terrain.Building);
+        tank.wallsBuilt++;
         break;
       case 'boat':
         if (t === Terrain.River) this.host.setTerrain(o.tx, o.ty, Terrain.BoatTile);

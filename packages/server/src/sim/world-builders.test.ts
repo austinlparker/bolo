@@ -16,8 +16,8 @@ import {
   TREES_PER_FOREST_TILE,
   WAR_MIN_MINUTES,
 } from '@bolo/shared';
-import { Terrain, MineState, idx } from '@bolo/shared';
-import { addTankAt, makeWorld, setTile, step, stepWar, stubRandom } from './world.test-utils';
+import { Terrain, MineState, TERRAIN, idx } from '@bolo/shared';
+import { addTankAt, findGrassTile, makeWorld, setTile, step, stepWar, stubRandom } from './world.test-utils';
 import { World } from './world';
 
 const W = MAP_SIZE;
@@ -285,6 +285,45 @@ describe('World victory & lifecycle', () => {
     // Step past respawnTick
     step(w, null, 10);
     expect(tank.alive).toBe(true);
+  });
+
+  it('respawn: never spawns a tank on a wall (Building) tile', () => {
+    const w = makeWorld();
+    const base = w.bases.find((b) => b.owner === 'dawn')!;
+    // Entomb the base: wall every tile in its 3×3 vicinity. The base pad
+    // itself rejects walls, so it stays drivable — findSpawnTile must land
+    // there (or spiral out) rather than drop the tank on a wall.
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        setTile(w, base.x + dx, base.y + dy, Terrain.Building);
+      }
+    }
+    const tank = addTankAt(w, { x: 128.5, y: 128.5, faction: 'dawn' });
+    tank.alive = false;
+    tank.respawnTick = 0;
+    // Force the spawn-offset rolls onto the walled neighbors so the spiral
+    // fallback (not the random vicinity hits) has to find the safe tile.
+    restoreRandom = stubRandom([0.1, 0.9, 0.1, 0.9, 0.1, 0.9, 0.1, 0.9, 0.1, 0.9, 0.5]);
+    w.respawn(tank.id);
+    expect(tank.alive).toBe(true);
+    const tile = w.tileAt(tank.x, tank.y) as Terrain;
+    expect(TERRAIN[tile].tankSpeed).toBeGreaterThan(0);
+    expect(tile).not.toBe(Terrain.Building);
+  });
+
+  it('wall order is refunded if a tank occupies the target tile', () => {
+    const w = makeWorld();
+    const { x, y } = findGrassTile(w);
+    // Park a tank dead-center on a grass tile, then order a wall under it.
+    const tank = addTankAt(w, { x: x + 0.5, y: y + 0.5, faction: 'dawn', trees: COST_WALL });
+    expect(w.builderOrder(tank.id, 'wall', x, y)).toBeNull();
+    // Let the builder complete the job (BUILDER_WORK_SECONDS at 10 Hz).
+    step(w, null, Math.ceil(BUILDER_WORK_SECONDS * 10) + 2);
+    // The wall must NOT have been placed — a tank was on the tile (a wall
+    // there would permanently immobilize it: Buildings have tankSpeed 0).
+    expect(w.terrain[idx(x, y)]).toBe(Terrain.Grass);
+    expect(tank.trees).toBe(COST_WALL); // cost refunded, not entombed
   });
 });
 

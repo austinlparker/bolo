@@ -525,7 +525,7 @@ export class NpcController {
                 const wy = friendlyBase.y + dy;
                 if (wx < 0 || wy < 0 || wx >= MAP_SIZE || wy >= MAP_SIZE) continue;
                 const wt = world.terrain[idx(wx, wy)] as Terrain;
-                if (canBuildOn(wt)) {
+                if (canBuildOn(wt) && !tileOccupied(world, wx, wy)) {
                   const err = world.builderOrder(tank.id, 'wall', wx, wy);
                   if (!err) {
                     mem.lastWallTick = world.tick;
@@ -1333,6 +1333,21 @@ function canBuildOn(t: Terrain): boolean {
     t === Terrain.Road ||
     t === Terrain.ShotBuilding
   );
+}
+
+/** Is any alive tank on or very near this tile? Used to avoid walling tanks
+ *  in (a wall under a tank permanently immobilizes it: Buildings have
+ *  tankSpeed 0 and the tank can't build speed to drive off). */
+function tileOccupied(world: World, tx: number, ty: number): boolean {
+  const cx = tx + 0.5;
+  const cy = ty + 0.5;
+  for (const t of world.tanks.values()) {
+    if (!t.alive) continue;
+    const dx = t.x - cx;
+    const dy = t.y - cy;
+    if (dx * dx + dy * dy < 2.25) return true; // 1.5²
+  }
+  return false;
 }
 
 // The old tuple-array heapPush/heapPop functions have been replaced by
