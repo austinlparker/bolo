@@ -578,6 +578,17 @@ export class Hud {
     const rank = rankFor(liveRating);
     const rankChip = `<img class="rank-chip" src="${rankImgUrl(rank)}" title="${rank.name} · ${liveRating} rating" alt="${rank.name}" />`;
 
+    // player's own Bluesky avatar for the callsign badge
+    const myDid = state.you?.did;
+    const myAvatar = myDid ? state.socialProfiles[myDid]?.avatar : undefined;
+    const avatarChip = myAvatar ? `<img class="callsign-avatar" src="${escapeAttr(myAvatar)}" alt="" loading="lazy" />` : '';
+
+    // handle→avatar lookup for the kill feed
+    const handleAvatar: Record<string, string> = {};
+    for (const p of Object.values(state.socialProfiles)) {
+      if (p.handle && p.avatar) handleAvatar[p.handle] = p.avatar;
+    }
+
     // centered death overlay (both desktop and mobile)
     const death = document.getElementById('death-overlay')!;
     if (me && me.armor !== undefined && !me.alive) {
@@ -601,7 +612,7 @@ export class Hud {
           ${me.carriedPill != null ? '<span class="stat">◉</span>' : ''}`);
       } else if (!me.alive) {
         this.setHtml(this.status, `
-          <div class="callsign">${rankChip}<span class="f-${me.faction}">${escapeHtml(me.handle)}</span></div>
+          <div class="callsign">${avatarChip}${rankChip}<span class="f-${me.faction}">${escapeHtml(me.handle)}</span></div>
           <div class="dim">awaiting redeployment</div>`);
       } else {
         const meters = METERS.map(
@@ -615,13 +626,13 @@ export class Hud {
           ? `builder: ${builderPhase}`
           : 'builder: in tank';
         this.setHtml(this.status, `
-          <div class="callsign">${rankChip}<span class="f-${me.faction}">${escapeHtml(me.handle)}</span>
+          <div class="callsign">${avatarChip}${rankChip}<span class="f-${me.faction}">${escapeHtml(me.handle)}</span>
             <span class="dim">· ${FACTION_NAMES[me.faction]} · ${rank.name}</span></div>
           ${meters}
           <div class="dim">${builderLine}${me.carriedPill != null ? ' · ◉ carrying pillbox' : ''}</div>`);
       }
     } else if (state.you) {
-      this.setHtml(this.status, `<div class="callsign"><span class="f-${state.you.faction}">${escapeHtml(state.you.handle)}</span></div><div class="dim">deploying…</div>`);
+      this.setHtml(this.status, `<div class="callsign">${avatarChip}<span class="f-${state.you.faction}">${escapeHtml(state.you.handle)}</span></div><div class="dim">deploying…</div>`);
     }
 
     if (state.war) this.setHtml(this.war, warLine(state.war, state.bases));
@@ -638,7 +649,14 @@ export class Hud {
     const mutualCount = state.mutuals.size;
     if (state.war) this.setHtml(this.war, `${warLine(state.war, state.bases)}${mutualCount > 0 ? `<span class="mutual-indicator">★${mutualCount}</span>` : ''}`);
 
-    this.setHtml(this.feed, state.feed.map((l) => `<div>${escapeHtml(l)}</div>`).join(''));
+    this.setHtml(this.feed, state.feed.map((l) => {
+      // find the first known handle in the line and prepend its avatar
+      let feedAvatar = '';
+      for (const [handle, avatar] of Object.entries(handleAvatar)) {
+        if (l.includes(handle)) { feedAvatar = `<img class="feed-avatar" src="${escapeAttr(avatar)}" alt="" loading="lazy" />`; break; }
+      }
+      return `<div>${feedAvatar}${escapeHtml(l)}</div>`;
+    }).join(''));
 
     // bounty panel
     if (state.bounties.length > 0) {

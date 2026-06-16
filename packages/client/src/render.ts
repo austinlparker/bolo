@@ -181,7 +181,7 @@ export class Renderer {
     // at max range along the hull axis
     if (meInterp && meInterp.cur.alive) {
       const p = state.predictedSelf(now);
-      const cross = sprites.images[meInterp.cur.faction === 'dawn' ? 'crosshairDawn' : 'crosshairDusk'];
+      const cross = sprites.images.crosshairBase;
       const range = meInterp.cur.gunRange ?? SHELL_RANGE;
       const [cxs, cys] = toScreen(p.x + Math.cos(p.dir) * range, p.y + Math.sin(p.dir) * range);
       const cs = this.scale * 0.85;

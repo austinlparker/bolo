@@ -1927,6 +1927,27 @@ body.touch-mode #hud-status .rank-chip {
   margin-right: 0;
 }
 
+/* ---------- callsign avatar (HUD name badge) ---------- */
+.callsign-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  object-fit: cover;
+  vertical-align: -4px;
+  margin-right: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* ---------- feed avatar (kill/event feed) ---------- */
+.feed-avatar {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  object-fit: cover;
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+
 /* ---------- profile card ---------- */
 .lb-click {
   cursor: pointer;
