@@ -58,8 +58,8 @@ async function startPlayer(): Promise<void> {
     document.getElementById('boot-retry')!.addEventListener('click', () => location.reload());
     return;
   }
-  boot.remove();
-
+  // Create the canvas behind the boot overlay so there's no flash of blank
+  // canvas; the overlay stays up until the first state frame arrives.
   const canvas = document.createElement('canvas');
   canvas.className = 'game';
   root.appendChild(canvas);
@@ -88,6 +88,7 @@ async function startPlayer(): Promise<void> {
     if (me?.alive) net.send({ t: 'builder', order, x: Math.floor(me.x), y: Math.floor(me.y) });
   };
   const touchControls = touch ? new TouchControls(root, net) : null;
+  let firstFrame = true;
 
   function handleMsg(msg: ServerMsg): void {
     switch (msg.t) {
@@ -121,8 +122,15 @@ async function startPlayer(): Promise<void> {
             }, 7500);
           }
         }
+        // During intermission the server sends no state frames; drop the
+        // overlay to reveal the intermission countdown HUD.
+        if (firstFrame && msg.war.phase === 'intermission') {
+          firstFrame = false;
+          boot.remove();
+        }
         break;
       case 'state': {
+        if (firstFrame) { firstFrame = false; boot.remove(); }
         const prevShells = new Set(state.shells.map((s) => s.id));
         state.applyState(msg);
         const ear = state.me();
@@ -204,7 +212,12 @@ async function startPlayer(): Promise<void> {
     }
   }
 
-  net.onClose = () => state.pushFeed('connection lost — reconnecting...');
+  net.onClose = () => {
+    if (firstFrame) {
+      boot.innerHTML = '<div class="boot-msg">connection lost — reconnecting…</div>';
+    }
+    state.pushFeed('connection lost — reconnecting...');
+  };
   const input = new Input(net, renderer, hud, state, sound);
   // after (re)connect, force-resend held controls + cruise so the fresh tank
   // obeys what's currently held instead of sitting idle
