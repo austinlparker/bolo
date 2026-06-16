@@ -194,6 +194,25 @@ export class GameDO implements DurableObject {
       });
     }
 
+    if (url.pathname === '/restart-ticking') {
+      // Emergency unstuck: cancel any stale alarm, reset flags, and
+      // schedule a fresh one. The alarm delivery can get wedged when
+      // old floating I/O (pre-fix social fetches) leaves the input gate
+      // blocked — a fresh setAlarm from a clean invocation kicks it.
+      await this.state.storage.deleteAlarm();
+      this.ticking = false;
+      this.socialRefreshPending = this.store.size > 0;
+      this.lastSocialRefreshTick = this.tickCounter;
+      this.startTicking();
+      const alarm = await this.state.storage.getAlarm();
+      return Response.json({
+        ok: true,
+        ticking: this.ticking,
+        alarmAt: alarm ? new Date(alarm).toISOString() : null,
+        now: new Date().toISOString(),
+      });
+    }
+
     return new Response('not found', { status: 404 });
   }
 
