@@ -74,7 +74,9 @@ export async function fetchProfiles(
     const chunk = misses.slice(i, i + 25);
     const q = chunk.map((d) => `actors=${encodeURIComponent(d)}`).join('&');
     try {
-      const res = await fetch(`${BSKY_APPVIEW}/app.bsky.actor.getProfiles?${q}`);
+      const res = await fetch(`${BSKY_APPVIEW}/app.bsky.actor.getProfiles?${q}`, {
+        signal: AbortSignal.timeout(3000),
+      });
       if (!res.ok) continue;
       const data = (await res.json()) as { profiles?: BskyProfile[] };
       for (const p of data.profiles ?? []) {
@@ -126,7 +128,9 @@ export async function fetchRelationships(
     const params = new URLSearchParams();
     params.set('actor', myDid);
     for (const d of real) params.append('others', d);
-    const res = await fetch(`${BSKY_APPVIEW}/app.bsky.graph.getRelationships?${params}`);
+    const res = await fetch(`${BSKY_APPVIEW}/app.bsky.graph.getRelationships?${params}`, {
+      signal: AbortSignal.timeout(3000),
+    });
     if (!res.ok) return out;
     const data = (await res.json()) as {
       relationships?: Array<{

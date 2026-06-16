@@ -18,6 +18,8 @@ export interface Session {
   lastEmoteAt: number;
   /** DIDs of currently-connected Bluesky mutuals (follows both ways) */
   mutuals: Set<string>;
+  /** True once mutuals have been computed for this session (debounced refresh) */
+  socialResolved?: boolean;
 }
 
 export class SessionStore {

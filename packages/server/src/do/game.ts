@@ -70,6 +70,10 @@ export class GameDO implements DurableObject {
    */
   private ticking = false;
   private tickCounter = 0;
+  /** True when a social data refresh is needed (set on connect, cleared by tick). */
+  private socialRefreshPending = false;
+  /** Tick counter at which the last social refresh ran (for debounce spacing). */
+  private lastSocialRefreshTick = 0;
   private loaded: Promise<void>;
   private statsSink: StatsSink;
 
@@ -321,10 +325,12 @@ export class GameDO implements DurableObject {
     this.store.add(session);
     this.store.send(session, this.views.welcomeFor(world, session, this.phase, this.nextWarAt));
     this.store.broadcastChat('system', `${session.handle ?? 'a spectator'} ${role === 'player' ? 'joined the war' : 'is watching'}`);
-    // fetch and broadcast social profiles for all connected real-DID players
-    this.sendSocialData();
-    // compute mutuals for the new player and update existing sessions
-    this.updateMutualsOnConnect(session);
+    // Defer social data fetching out of the connect path entirely.
+    // On cold KV cache these calls can take seconds (or hang up to 30s),
+    // and a Durable Object's input gate blocks the alarm/tick until they
+    // settle — freezing the game load. The tick loop picks this up and
+    // runs a debounced refresh within 5s instead.
+    this.socialRefreshPending = true;
     // send current active bounties
     this.sendBountiesTo(session);
     this.startTicking();
@@ -389,6 +395,27 @@ export class GameDO implements DurableObject {
     // send the new player their own mutuals list
     if (session.mutuals.size > 0) {
       this.store.send(session, { t: 'mutuals', dids: [...session.mutuals] });
+    }
+  }
+
+  /**
+   * Debounced social data refresh, invoked from the tick loop instead of the
+   * connect path. Broadcasts profiles to all sessions and computes mutuals for
+   * any session that joined since the last refresh. Running here (inside the
+   * alarm callback) means the I/O is charged to the alarm's own invocation,
+   * not stacked behind a WebSocket message — the input gate stays responsive.
+   */
+  private async refreshSocialData(): Promise<void> {
+    // Profile broadcast (existing sendSocialData, unchanged)
+    await this.sendSocialData();
+
+    // Mutuals: compute for sessions that haven't been resolved yet.
+    for (const session of this.store) {
+      if (session.role !== 'player' || !session.did) continue;
+      if (!session.did.startsWith('did:plc:') && !session.did.startsWith('did:web:')) continue;
+      if (session.mutuals.size > 0 || session.socialResolved) continue;
+      session.socialResolved = true;
+      void this.updateMutualsOnConnect(session);
     }
   }
 
@@ -839,6 +866,15 @@ export class GameDO implements DurableObject {
           this.store.sendRaw(session, plainRaw);
         }
       }
+    }
+
+    // Debounced social refresh: coalesces joins into one fetch every 5s
+    // so the connect path performs zero social I/O and the input gate
+    // never blocks the first tick.
+    if (this.socialRefreshPending && counter - this.lastSocialRefreshTick >= TICK_HZ * 5) {
+      this.socialRefreshPending = false;
+      this.lastSocialRefreshTick = counter;
+      void this.refreshSocialData();
     }
 
     if (result.warEnded) {
