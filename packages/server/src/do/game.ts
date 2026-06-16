@@ -213,6 +213,22 @@ export class GameDO implements DurableObject {
       });
     }
 
+    if (url.pathname === '/force-restart') {
+      // Nuclear option: the alarm delivery is wedged at the runtime level
+      // and can't be fixed from code. Close all connections, delete the
+      // alarm, and let the DO evict from memory. The next connection
+      // creates a fresh DO instance with working alarm delivery.
+      console.log('[force-restart] closing all sessions and clearing alarm');
+      for (const s of this.store) {
+        try { s.ws.close(4003, 'force restart'); } catch {}
+      }
+      await this.state.storage.deleteAlarm();
+      this.ticking = false;
+      this.tickCounter = 0;
+      this.store.clear();
+      return Response.json({ ok: true, msg: 'DO will evict and restart on next connection' });
+    }
+
     return new Response('not found', { status: 404 });
   }
 
