@@ -64,8 +64,12 @@ describe('auth: mintToken / verifyToken', () => {
     const dot = token.indexOf('.');
     const bodyB64 = token.slice(0, dot);
     const sigB64 = token.slice(dot + 1);
-    // Flip a character in the signature
-    const tamperedSig = sigB64.slice(0, -1) + (sigB64.slice(-1) === 'A' ? 'B' : 'A');
+    // Flip the FIRST character of the signature — unlike the last char (which
+    // only carries 4 significant bits in a 43-char SHA-256 base64url encoding,
+    // making A↔B flips a no-op ~6% of the time), the first char always has
+    // full 6-bit precision so the tamper reliably changes the decoded bytes.
+    const tamperedFirst = sigB64.charAt(0) === 'A' ? 'B' : 'A';
+    const tamperedSig = tamperedFirst + sigB64.slice(1);
     const tamperedToken = `${bodyB64}.${tamperedSig}`;
     const payload = await verifyToken(SECRET, tamperedToken);
     expect(payload).toBeNull();
