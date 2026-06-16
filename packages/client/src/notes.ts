@@ -16,6 +16,24 @@ export interface Bulletin {
 
 export const BULLETINS: Bulletin[] = [
   {
+    id: 3,
+    date: '2026-06-16',
+    title: 'THE HEADING DISPATCHES',
+    items: [
+      'turning is fixed. the old model had two ramps fighting each other — your client ramped one way, the server ramped another, and the mismatch made your tank drift after you let go. now your client owns the heading outright and tells the server where you\'re pointed. tap to nudge, hold to swing, release to stop dead. no overshoot, no drift, no fighting.',
+      'your tank reacts the instant you touch a control. the client predicts your movement locally and reconciles with the server behind the scenes — no more waiting a tenth of a second for the round-trip before your hull starts moving.',
+      'other tanks turn smoother too: a deeper interpolation buffer absorbs network jitter instead of stuttering when a packet lands late.',
+      'bluesky avatars appear on tank name badges, the HUD, and the kill feed. mutual follows are flagged — you\'ll know who you actually know out there.',
+      'bounties: when someone kills your mutual, a bounty goes on the killer. any mutual of the victim can claim it for bonus kill credit. escalate with B (or the 💰 button) to raise the stakes.',
+      'your top nemesis is tracked across the war — the player who\'s killed you the most. revenge kills and paybacks light up the feed.',
+      'garrison AI rebuilt from scratch. NPCs build boats and cross water, coordinate focus fire, defend sieged bases, dodge incoming shells, steer around mines, retreat when outgunned, and lay tactical roads, walls, and mines. they\'re still beatable — but they won\'t drown in a puddle or charge single-file into your gun anymore.',
+      'bases have square wall perimeters now, built by the garrison. spawn-trapping from NPC walls is fixed.',
+      'white crosshair for better contrast against terrain.',
+      'stability: the server no longer drops everyone after ~30 minutes of cumulative CPU (switched to alarm-driven ticking). connecting no longer freezes the game while fetching social graph data. and reconnecting after a server restart actually puts you back in a tank instead of stranding you as a spectator.',
+      'loading screen stays until the first game frame actually renders — no more blank canvas gap on connect.',
+    ],
+  },
+  {
     id: 2,
     date: '2026-06-13',
     title: 'THE REFIT DISPATCHES',
