@@ -274,8 +274,11 @@ export class Input {
       }
       return;
     }
-    // sync myDir from server on large divergence (respawn/teleport)
-    if (Math.abs(angleDelta(this.myDir, me.dir)) > 0.15) {
+    // sync myDir from server only on genuine respawn/teleport (large heading
+    // jump). During normal play the client owns heading — the server's dir
+    // always lags behind by up to ~0.5 rad with latency, which must NOT
+    // trigger a snap-back or the turn fights itself.
+    if (Math.abs(angleDelta(this.myDir, me.dir)) > Math.PI / 2) {
       this.myDir = me.dir;
     }
     // --- throttle: ramp cruise toward held direction ---

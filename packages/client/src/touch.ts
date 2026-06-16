@@ -186,8 +186,9 @@ export class TouchControls {
 
     if (!me) return;
 
-    // sync myDir from server on large divergence (respawn/teleport)
-    if (Math.abs(angleDelta(this.myDir, me.dir)) > 0.15) this.myDir = me.dir;
+    // sync myDir from server only on genuine respawn/teleport (large heading
+    // jump). Normal turning divergence from latency must not trigger a snap.
+    if (Math.abs(angleDelta(this.myDir, me.dir)) > Math.PI / 2) this.myDir = me.dir;
 
     const accel = Math.round(this.cruise * 100) / 100;
     // turn: ease-in past a wider deadzone so a near-centered stick holds straight
