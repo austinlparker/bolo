@@ -53,6 +53,11 @@ export default {
       return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', ...CORS } });
     }
 
+    if (url.pathname === '/api/debug') {
+      const res = await world().fetch(new Request(new URL('/debug', url.origin)));
+      return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', ...CORS } });
+    }
+
     if (url.pathname === '/api/profiles' && request.method === 'GET') {
       const dids = url.searchParams.getAll('dids').filter(Boolean);
       if (dids.length === 0) return json({ profiles: {} });

@@ -180,6 +180,20 @@ export class GameDO implements DurableObject {
       });
     }
 
+    if (url.pathname === '/debug') {
+      const alarm = await this.state.storage.getAlarm();
+      return Response.json({
+        ticking: this.ticking,
+        tickCounter: this.tickCounter,
+        storeSize: this.store.size,
+        phase: this.phase,
+        socialRefreshPending: this.socialRefreshPending,
+        alarmAt: alarm ? new Date(alarm).toISOString() : null,
+        now: new Date().toISOString(),
+        worldTick: this.world?.tick ?? null,
+      });
+    }
+
     return new Response('not found', { status: 404 });
   }
 
