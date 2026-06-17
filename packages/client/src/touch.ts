@@ -215,6 +215,14 @@ export class TouchControls {
     const fire = this.fireHeld;
     const dir = Math.round(this.myDir * 100) / 100;
 
+    // Feed the prediction model EVERY FRAME so the rendered heading tracks the
+    // smooth per-frame turn integration. The network send below is throttled
+    // to SEND_MIN_INTERVAL — if recordInput only fired there, the displayed
+    // heading would freeze between sends and turning would look stepped/choppy.
+    // (This is exactly why keyboard turning is smooth: Input.tick calls
+    // recordInput each frame, gated only on activity.)
+    state.recordInput(accel, this.myDir, fire);
+
     const throttleActive = thr !== 0;
     const turnActive = this.turnSpeed !== 0;
     const fireChanged = fire !== this.lastSent.fire;
@@ -231,8 +239,6 @@ export class TouchControls {
       this.lastSent = { accel, dir, fire };
       this.lastSentAt = now;
       this.net.send({ t: 'input', accel, dir, fire });
-      // feed the prediction model so the client can dead-reckon (same as keyboard)
-      state.recordInput(accel, this.myDir, fire);
     }
   }
 
